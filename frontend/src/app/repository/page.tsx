@@ -129,7 +129,7 @@ export default function RepositoryPage() {
         onRowClick={(item) => {
           // Open the most recent inspection for this product, when there is one.
           const last = item.complianceHistory?.[item.complianceHistory.length - 1];
-          if (last?.inspectionId) router.push(`/results/${last.inspectionId}`);
+          if (last?.inspectionId) router.push(`/results/${last.inspectionId}?from=repository`);
         }}
         emptyMessage="No products match these filters."
         pagination={{

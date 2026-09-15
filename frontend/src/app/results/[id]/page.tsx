@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { Suspense, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, Gavel, ScanSearch } from 'lucide-react';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { Button } from '@/components/ui/Button';
@@ -28,8 +29,22 @@ const asRef = (value: unknown): PopulatedRef | null =>
 
 type Tab = 'checklist' | 'compliance' | 'declarations' | 'tokens';
 
-export default function ResultsPage({ params }: { params: { id: string } }) {
+/**
+ * Where the back link goes. An inspection is opened from several places, so the
+ * origin travels in `?from=` and the link returns the officer to the list they
+ * actually came from rather than always dropping them on the dashboard.
+ */
+const BACK_TARGETS: Record<string, { href: string; label: string }> = {
+  repository: { href: '/repository', label: 'Back to repository' },
+  dashboard: { href: '/dashboard', label: 'Back to dashboard' },
+};
+
+const DEFAULT_BACK = BACK_TARGETS.dashboard;
+
+function ResultsPageInner({ params }: { params: { id: string } }) {
   const { user } = useAuth();
+  const searchParams = useSearchParams();
+  const back = BACK_TARGETS[searchParams?.get('from') || ''] || DEFAULT_BACK;
   const inspection = useApi(() => inspectionService.byId(params.id), [params.id]);
 
   const [tab, setTab] = useState<Tab | null>(null);
@@ -99,8 +114,8 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
             <Button variant="secondary" onClick={inspection.reload}>
               Try again
             </Button>
-            <Link href="/dashboard">
-              <Button variant="ghost">Back to dashboard</Button>
+            <Link href={back.href}>
+              <Button variant="ghost">{back.label}</Button>
             </Link>
           </div>
         </div>
@@ -138,11 +153,11 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
   return (
     <div className="mx-auto max-w-7xl p-4 lg:p-8">
       <Link
-        href="/dashboard"
+        href={back.href}
         className="focus-ring mb-4 inline-flex items-center gap-1.5 rounded text-sm text-cyan-700 hover:text-cyan-900"
       >
         <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-        Back to dashboard
+        {back.label}
       </Link>
 
       <div className="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
@@ -514,5 +529,17 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
         </form>
       </Modal>
     </div>
+  );
+}
+
+/**
+ * useSearchParams (used for the `?from=` back target) must sit inside a
+ * Suspense boundary or `next build` refuses to prerender the route.
+ */
+export default function ResultsPage({ params }: { params: { id: string } }) {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[var(--app-bg)]" />}>
+      <ResultsPageInner params={params} />
+    </Suspense>
   );
 }

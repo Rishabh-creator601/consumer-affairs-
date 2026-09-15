@@ -35,7 +35,7 @@ export function RecentInspections({ data, isLoading }: RecentInspectionsProps) {
           <ul className="divide-y divide-cyan-50">
             {data.map((item) => (
               <li key={item._id} className="transition-colors hover:bg-cyan-50/60">
-                <Link href={`/results/${item._id}`} className="block p-4">
+                <Link href={`/results/${item._id}?from=dashboard`} className="block p-4">
                   <div className="flex items-start justify-between gap-3">
                     <span className="font-mono text-sm font-semibold text-cyan-700">{item.ref}</span>
                     <StatusPill verdict={item.verdict} />

@@ -72,3 +72,10 @@ tmp/
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Local credentials and secrets. Never commit: git history keeps a secret
+# after the file is deleted, so the only real fix is rotating the password.
+CREDENTIALS.local.txt
+*.local.txt
+*credentials*.txt
+*secrets*.txt

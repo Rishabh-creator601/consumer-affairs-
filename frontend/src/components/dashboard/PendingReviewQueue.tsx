@@ -49,7 +49,7 @@ export function PendingReviewQueue({ data, isLoading }: PendingReviewQueueProps)
                 </p>
                 <div>
                   <Link
-                    href={`/results/${item._id}`}
+                    href={`/results/${item._id}?from=dashboard`}
                     className="focus-ring inline-flex items-center rounded-lg border border-cyan-300 bg-white px-3 py-1.5 text-xs font-medium text-cyan-800 transition-colors hover:bg-cyan-50"
                   >
                     Review now

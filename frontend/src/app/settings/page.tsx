@@ -44,7 +44,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Account */}
-      <section className="card p-6">
+      <section id="account" className="card p-6 scroll-mt-20">
         <h2 className="section-title mb-4">Account</h2>
 
         <div className="flex items-center gap-4">
