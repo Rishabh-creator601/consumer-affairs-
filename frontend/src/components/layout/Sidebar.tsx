@@ -5,17 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { ROLE_LABELS, ROUTE_ACCESS } from '@/lib/constants';
 import type { UserRole } from '@/types/user';
-import {
-  LayoutDashboard,
-  Camera,
-  Upload,
-  Package,
-  BookOpen,
-  Users,
-  LogOut,
-  ShieldCheck,
-  X,
-} from 'lucide-react';
+import { BookOpen, Camera, LayoutDashboard, LogOut, Package, Settings, ShieldCheck, Upload, Users, X } from 'lucide-react';
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -24,6 +14,7 @@ const navigation = [
   { name: 'Repository', href: '/repository', icon: Package },
   { name: 'Rules', href: '/rules', icon: BookOpen },
   { name: 'Users', href: '/admin/users', icon: Users },
+  { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
 interface SidebarProps {

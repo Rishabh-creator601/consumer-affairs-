@@ -49,6 +49,10 @@ services:
       VLM_PROVIDER: ${VLM_PROVIDER:-anthropic}
       VLM_MODEL: ${VLM_MODEL:-}
       VLM_API_KEY: ${VLM_API_KEY:-}
+      VLM_API_KEY_2: ${VLM_API_KEY_2:-}
+      VLM_API_KEY_3: ${VLM_API_KEY_3:-}
+      VLM_API_KEYS: ${VLM_API_KEYS:-}
+      EXTRACTION_FALLBACK_ENABLED: ${EXTRACTION_FALLBACK_ENABLED:-true}
     ports:
       - "8001:8001"
     networks:

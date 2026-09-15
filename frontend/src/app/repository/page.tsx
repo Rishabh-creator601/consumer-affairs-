@@ -8,6 +8,7 @@ import { StatusPill } from '@/components/ui/StatusPill';
 import { useApi } from '@/lib/hooks';
 import { productService } from '@/lib/services';
 import { formatDate } from '@/lib/constants';
+import { MyReports } from '@/components/reports/MyReports';
 import type { Product } from '@/types/product';
 
 export default function RepositoryPage() {
@@ -138,6 +139,10 @@ export default function RepositoryPage() {
           totalItems: meta?.total,
         }}
       />
+
+      <div className="mt-8">
+        <MyReports />
+      </div>
     </div>
   );
 }

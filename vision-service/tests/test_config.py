@@ -34,6 +34,12 @@ def _reload_config(monkeypatch, *, load_env_file=False, **env):
 
     for key in (
         "VLM_API_KEY",
+        # The backup slots must be cleared too: an earlier test that loaded the
+        # real .env leaves them in os.environ for the rest of the session, and a
+        # key surviving into a "no key configured" test makes it pass wrongly.
+        "VLM_API_KEY_2",
+        "VLM_API_KEY_3",
+        "VLM_API_KEYS",
         "VLM_PROVIDER",
         "VLM_MODEL",
         "VLM_ENABLED",
@@ -115,6 +121,31 @@ class TestProviderResolution:
     def test_explicit_model_overrides_the_default(self, monkeypatch):
         config = _reload_config(monkeypatch, VLM_PROVIDER="google", VLM_MODEL="gemini-2.5-pro")
         assert config.settings.VLM_MODEL == "gemini-2.5-pro"
+
+
+class TestKeyFailover:
+    def test_collects_every_configured_key_in_order(self, monkeypatch):
+        config = _reload_config(
+            monkeypatch, VLM_API_KEY="primary", VLM_API_KEY_2="backup", VLM_API_KEY_3="third"
+        )
+        assert config.settings.VLM_API_KEYS == ["primary", "backup", "third"]
+
+    def test_accepts_a_comma_separated_list(self, monkeypatch):
+        config = _reload_config(monkeypatch, VLM_API_KEY="primary", VLM_API_KEYS="a, b ,c")
+        assert config.settings.VLM_API_KEYS == ["primary", "a", "b", "c"]
+
+    def test_drops_blank_slots(self, monkeypatch):
+        config = _reload_config(monkeypatch, VLM_API_KEY="primary", VLM_API_KEY_2="  ")
+        assert config.settings.VLM_API_KEYS == ["primary"]
+
+    def test_configured_on_a_backup_key_alone(self, monkeypatch):
+        # A revoked primary must not make the service report itself unconfigured.
+        _reload_config(monkeypatch, VLM_PROVIDER="google", VLM_API_KEY_2="backup")
+
+        import app.gemini.extractor as extractor
+
+        importlib.reload(extractor)
+        assert extractor.is_configured() is True
 
 
 class TestExtractionMode:

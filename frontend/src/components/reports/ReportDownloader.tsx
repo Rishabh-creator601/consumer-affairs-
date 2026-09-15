@@ -46,9 +46,12 @@ export function ReportDownloader({
     setError(null);
 
     try {
-      // Generate server-side, then stream the stored file back as a blob.
-      const report = await reportService.generate(inspectionId, format);
-      const response = await api.get(reportService.downloadUrl(report._id), { responseType: 'blob' });
+      // Persist the report as JSON once, then ask the API to render that stored
+      // payload into the requested format. Nothing binary is kept server-side.
+      const report = await reportService.generate(inspectionId);
+      const response = await api.get(reportService.downloadUrl(report._id, format), {
+        responseType: 'blob',
+      });
 
       const url = URL.createObjectURL(response.data as Blob);
       const link = document.createElement('a');

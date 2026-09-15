@@ -104,6 +104,8 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
   '/results': ['field_inspector', 'senior_inspector', 'controller', 'legal_officer', 'auditor'],
   '/rules': ['field_inspector', 'senior_inspector', 'controller', 'legal_officer', 'auditor'],
   '/admin/users': ['controller', 'auditor'],
+  // Everyone needs their own account page, whatever their role.
+  '/settings': ['field_inspector', 'senior_inspector', 'controller', 'legal_officer', 'auditor'],
 };
 
 export const PASSWORD_RULES = [

@@ -2,7 +2,7 @@
 
 import { Menu, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
-import { ROLE_LABELS } from '@/lib/constants';
+import UserMenu from './UserMenu';
 
 interface HeaderProps {
   onMenuClick: () => void;
@@ -10,13 +10,6 @@ interface HeaderProps {
 
 export function Header({ onMenuClick }: HeaderProps) {
   const { user } = useAuth();
-
-  const initials = (user?.displayName || user?.email || '?')
-    .split(/[\s@.]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('');
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-cyan-100 bg-white/85 px-4 backdrop-blur-md lg:h-16 lg:px-8">
@@ -44,19 +37,7 @@ export function Header({ onMenuClick }: HeaderProps) {
             {user.jurisdiction}
           </span>
         )}
-        <div className="flex items-center gap-2.5">
-          <div className="hidden text-right sm:block">
-            <p className="text-sm font-medium leading-tight text-cyan-950">
-              {user?.displayName || user?.email}
-            </p>
-            <p className="text-xs leading-tight text-slate-500">
-              {user ? ROLE_LABELS[user.role] || user.role : ''}
-            </p>
-          </div>
-          <span className="grid h-9 w-9 place-items-center rounded-full bg-cyan-50 text-sm font-semibold text-cyan-800 ring-1 ring-cyan-200">
-            {initials}
-          </span>
-        </div>
+        <UserMenu />
       </div>
     </header>
   );

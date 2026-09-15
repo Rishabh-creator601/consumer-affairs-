@@ -3,6 +3,7 @@ import type { Product } from '@/types/product';
 import type { Inspection } from '@/types/inspection';
 import type { Rule } from '@/types/rule';
 import type { User } from '@/types/user';
+import type { ReportFormat, StoredReport } from '@/types/report';
 
 export interface DashboardStats {
   totalScanned: number;
@@ -205,7 +206,17 @@ export const userService = {
 };
 
 export const reportService = {
-  generate: (inspectionId: string, format: 'pdf' | 'docx' | 'xlsx') =>
-    post<{ _id: string; format: string; qrToken: string }>(`/reports/generate/${inspectionId}`, { format }),
-  downloadUrl: (reportId: string) => `/reports/${reportId}/download`,
+  /**
+   * Persists the report as JSON. Format is not sent any more - one stored
+   * payload is rendered into whichever format is asked for at download time.
+   */
+  generate: (inspectionId: string) =>
+    post<StoredReport>(`/reports/generate/${inspectionId}`, {}),
+  /** The signed-in officer's own reports, newest first. */
+  mine: (params: { page?: number; limit?: number; search?: string; verdict?: string } = {}) =>
+    getPaged<StoredReport[]>('/reports/mine', { params }),
+  forInspection: (inspectionId: string) =>
+    get<StoredReport[]>(`/reports/inspection/${inspectionId}`),
+  downloadUrl: (reportId: string, format: ReportFormat = 'pdf') =>
+    `/reports/${reportId}/download?format=${format}`,
 };

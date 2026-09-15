@@ -24,10 +24,10 @@ class GeminiUnavailable(RuntimeError):
 
 
 def is_configured() -> bool:
-    return bool(settings.VLM_API_KEY) and settings.VLM_PROVIDER == "google"
+    return bool(settings.VLM_API_KEYS) and settings.VLM_PROVIDER == "google"
 
 
-def _client():
+def _client(api_key: str):
     try:
         from google import genai
     except ImportError as exc:
@@ -35,55 +35,144 @@ def _client():
             "The Gemini SDK is not installed. Run: pip install google-genai"
         ) from exc
 
-    if not settings.VLM_API_KEY:
+    if not api_key:
         raise GeminiUnavailable(
             "No API key. Set VLM_API_KEY in .env (never in source, never committed)."
         )
 
-    return genai.Client(api_key=settings.VLM_API_KEY)
+    return genai.Client(api_key=api_key)
 
 
-# Upstream conditions that are worth waiting out rather than failing on. A
-# model-overloaded 503 or a rate-limit 429 says "not now", not "never" -- and an
-# officer standing in a shop should not lose a capture to either.
+def _redact(api_key: str) -> str:
+    """Keys are identified in logs by shape, never printed."""
+    if not api_key:
+        return "<none>"
+    return f"{api_key[:6]}...{api_key[-4:]}" if len(api_key) > 12 else "<short>"
+
+
+# Three failure classes, three different responses. Getting these apart matters:
+# rotating to the spare key on a transient burns it for nothing, and retrying a
+# revoked key wastes the officer's time.
+#
+#   TRANSIENT  the service is busy. Retry the same key with backoff.
+#   KEY        this key cannot be used: revoked, expired, wrong project, or out
+#              of quota. Move to the next key immediately.
+#   CLIENT     the request itself is wrong -- an unreadable image, a bad schema.
+#              No key will fix it, so fail fast rather than trying them all.
 _TRANSIENT_MARKERS = (
     "503", "unavailable", "overloaded",
-    "429", "rate limit", "resource_exhausted", "quota",
     "500", "internal", "deadline", "timeout",
 )
 
+_KEY_FAILURE_MARKERS = (
+    "401", "403", "unauthenticated", "permission_denied", "permission denied",
+    "api key not valid", "api_key_invalid", "invalid api key", "expired",
+    "429", "rate limit", "resource_exhausted", "quota",
+    "billing", "suspended", "disabled",
+)
+
+_CLIENT_ERROR_MARKERS = (
+    "400", "invalid_argument", "unable to process input image",
+    "unsupported", "too large", "safety",
+)
+
+
+def _classify(exc: Exception) -> str:
+    message = str(exc).lower()
+
+    # Order matters: a 429 mentions "quota" and would otherwise read as
+    # transient, but the right response is to reach for the next key.
+    if any(marker in message for marker in _KEY_FAILURE_MARKERS):
+        return "key"
+    if any(marker in message for marker in _CLIENT_ERROR_MARKERS):
+        return "client"
+    if any(marker in message for marker in _TRANSIENT_MARKERS):
+        return "transient"
+    return "unknown"
+
 
 def _is_transient(exc: Exception) -> bool:
-    message = str(exc).lower()
-    return any(marker in message for marker in _TRANSIENT_MARKERS)
+    return _classify(exc) == "transient"
 
 
-def _generate_with_retry(client: Any, model: str, contents: Any, config: Any) -> Any:
-    """Call Gemini, retrying transient upstream failures with backoff."""
+def _generate_on_key(api_key: str, model: str, contents: Any, config: Any) -> Any:
+    """Call Gemini on one key, retrying only while the service is busy."""
     attempts = max(1, settings.GEMINI_MAX_ATTEMPTS)
     last: Exception | None = None
 
     for attempt in range(attempts):
         try:
+            client = _client(api_key)
             return client.models.generate_content(model=model, contents=contents, config=config)
         except Exception as exc:  # pragma: no cover - depends on the provider
             last = exc
-            if not _is_transient(exc) or attempt == attempts - 1:
+            kind = _classify(exc)
+
+            # Only a busy service is worth waiting for. A dead key or a bad
+            # request will say the same thing however many times it is asked.
+            if kind != "transient" or attempt == attempts - 1:
                 break
 
             delay = settings.GEMINI_RETRY_BASE_S * (2**attempt)
             print(
-                f"Gemini transient failure (attempt {attempt + 1}/{attempts}), "
-                f"retrying in {delay:.1f}s: {str(exc)[:120]}"
+                f"Gemini busy on key {_redact(api_key)} "
+                f"(attempt {attempt + 1}/{attempts}), retrying in {delay:.1f}s"
             )
             time.sleep(delay)
 
-    hint = (
-        " The model was busy upstream; this usually clears in a few seconds."
-        if last and _is_transient(last)
-        else ""
+    raise last if last else GeminiUnavailable("Gemini call failed with no error recorded.")
+
+
+def _generate_with_failover(model: str, contents: Any, config: Any) -> tuple[Any, dict]:
+    """Try each configured key in turn, returning the response and what happened.
+
+    Returns (response, provenance) so the caller can record which key served the
+    request -- an inspection that was read on the backup key is worth being able
+    to see later.
+    """
+    keys = settings.VLM_API_KEYS
+    if not keys:
+        raise GeminiUnavailable(
+            "No API key. Set VLM_API_KEY in .env (never in source, never committed)."
+        )
+
+    attempts_log: list[dict] = []
+    last: Exception | None = None
+
+    for index, api_key in enumerate(keys):
+        label = f"key_{index + 1}"
+        try:
+            response = _generate_on_key(api_key, model, contents, config)
+            return response, {
+                "key_used": label,
+                "key_index": index,
+                "key_fingerprint": _redact(api_key),
+                "keys_configured": len(keys),
+                "attempts": attempts_log,
+            }
+        except Exception as exc:  # pragma: no cover - depends on the provider
+            last = exc
+            kind = _classify(exc)
+            attempts_log.append(
+                {"key": label, "outcome": kind, "detail": str(exc)[:200]}
+            )
+
+            if kind == "client":
+                # No other key will read an unreadable image.
+                raise GeminiUnavailable(
+                    f"Gemini rejected the request and no other key would help: {exc}"
+                ) from exc
+
+            remaining = len(keys) - index - 1
+            print(
+                f"Gemini {label} ({_redact(api_key)}) failed [{kind}]. "
+                + (f"Falling back to the next key ({remaining} left)." if remaining else
+                   "No keys left.")
+            )
+
+    raise GeminiUnavailable(
+        f"All {len(keys)} Gemini key(s) failed. Last error: {last}",
     )
-    raise GeminiUnavailable(f"Gemini request failed after {attempts} attempt(s): {last}.{hint}")
 
 
 def _to_pixels(box_2d: list[int], width: int, height: int) -> dict[str, int]:
@@ -124,7 +213,6 @@ def extract(
     from google.genai import types
 
     started = time.perf_counter()
-    client = _client()
     chosen_model = model or settings.VLM_MODEL or "gemini-2.5-flash"
 
     config = types.GenerateContentConfig(
@@ -142,7 +230,7 @@ def extract(
         EXTRACTION_PROMPT,
     ]
 
-    response = _generate_with_retry(client, chosen_model, contents, config)
+    response, provenance = _generate_with_failover(chosen_model, contents, config)
 
     raw = (response.text or "").strip()
     if not raw:
@@ -166,6 +254,7 @@ def extract(
         "provider": "google",
         "processing_time_ms": int((time.perf_counter() - started) * 1000),
         "usage": _usage(response),
+        **provenance,
     }
     return data
 

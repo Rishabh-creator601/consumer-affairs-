@@ -150,6 +150,7 @@ router.post(
 
         inspection.extracted = result.declarations;
         inspection.extractionReport = result.report;
+        inspection.extractionSource = result.source;
         inspection.ocrTokens = [];
         inspection.status = 'extracted';
         // No verdicts in this mode: the rule engine is dormant, and an empty
@@ -163,11 +164,14 @@ router.post(
           success: true,
           data: inspection,
           meta: {
-            mode: 'gemini',
+            mode: result.mode || 'gemini',
+            source: result.source,
             engine: result.engine,
+            keyUsed: result.keyUsed,
             usage: result.usage,
             regionsDetected: result.detections.length,
-            imageHash: result.imageHash
+            imageHash: result.imageHash,
+            warnings: result.warnings || []
           }
         });
       }

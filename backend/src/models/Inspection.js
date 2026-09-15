@@ -114,6 +114,9 @@ const inspectionSchema = new mongoose.Schema({
   // Client-facing extraction report produced by the Gemini path. Stored whole
   // so the report an officer downloaded can be reproduced exactly later.
   extractionReport: mongoose.Schema.Types.Mixed,
+  // Which engine actually read this label: 'gemini' or 'ocr-fallback'. An
+  // officer cannot judge how far to trust an extraction without knowing.
+  extractionSource: String,
   // Counts, resolved category and scope-gate outcome for the evaluated rows.
   complianceSummary: mongoose.Schema.Types.Mixed,
   remarks: String,

@@ -183,26 +183,155 @@ async function tagUnstructured(file, tokens = []) {
  * sidecar is unreachable or Gemini is not configured, so the caller can say so
  * rather than silently substituting a worse reading.
  */
-async function extract(file, { buildReport = true, model } = {}) {
+async function extract(file, { buildReport = true, model, allowOcrFallback = true } = {}) {
   const payload = await callVision('/extract', {
     file,
     fields: { build_report: String(buildReport), model },
     timeoutMs: EXTRACT_TIMEOUT_MS
   });
 
-  if (!payload || !payload.data) return null;
+  if (payload && payload.data) {
+    const { extraction, declarations, report, imageHash, mode } = payload.data;
+    const meta = (extraction && extraction._meta) || {};
 
-  const { extraction, declarations, report, imageHash, mode } = payload.data;
+    return {
+      extraction,
+      declarations,
+      report: report || null,
+      imageHash,
+      mode,
+      detections: (extraction && extraction.detections) || [],
+      engine: meta.model || 'gemini',
+      source: 'gemini',
+      keyUsed: meta.key_used || null,
+      usage: meta.usage || null,
+      warnings: meta.key_used && meta.key_used !== 'key_1'
+        ? [
+            `The primary API key could not be used, so this reading was taken on ` +
+              `${meta.key_used.replace('_', ' ')}.`
+          ]
+        : []
+    };
+  }
+
+  // Every Gemini key failed. Rather than lose the capture, read the label with
+  // the local OCR engine instead. The reading is materially worse -- it is the
+  // regex tagger over OCR tokens, which is why the model path exists -- so it
+  // is flagged at every level: on the result, in the report, and on the record.
+  if (!allowOcrFallback) return null;
+
+  return module.exports.extractViaOcr(file);
+}
+
+/**
+ * Third-tier fallback: local OCR instead of the model.
+ *
+ * Marked plainly rather than passed off as a model reading. An officer who
+ * cannot tell which engine produced an extraction cannot judge how far to
+ * trust it, and this one misses small print the model reads comfortably.
+ */
+async function extractViaOcr(file) {
+  // Called through the module export rather than the local binding so the OCR
+  // tier can be substituted in a test without a live sidecar.
+  const analysis = await module.exports.analyze(file, { languages: ['en'] });
+  if (!analysis || !analysis.tokens || analysis.tokens.length === 0) return null;
+
+  const {
+    extractDeclarations,
+    toInspectionExtracted
+  } = require('./extractionService');
+
+  const extraction = extractDeclarations(analysis.tokens);
+  const declarations = toInspectionExtracted(extraction, {
+    engine: analysis.engine,
+    imageHash: analysis.imageHash,
+    measurements: analysis.measurements,
+    warnings: analysis.warnings
+  });
+
+  const degraded =
+    'Read by the local OCR engine because no API key could be used. This reading ' +
+    'misses small print the model recovers, and every declaration on it should be ' +
+    'confirmed against the pack.';
 
   return {
-    extraction,
+    extraction: { detections: [], _meta: { model: analysis.engine } },
     declarations,
-    report: report || null,
-    imageHash,
-    mode,
-    detections: (extraction && extraction.detections) || [],
-    engine: (extraction && extraction._meta && extraction._meta.model) || 'gemini',
-    usage: (extraction && extraction._meta && extraction._meta.usage) || null
+    report: buildOcrReport(declarations, analysis, degraded),
+    imageHash: analysis.imageHash,
+    mode: 'ocr-fallback',
+    detections: [],
+    engine: analysis.engine,
+    source: 'ocr-fallback',
+    keyUsed: null,
+    usage: null,
+    warnings: [degraded, ...(analysis.warnings || [])]
+  };
+}
+
+/** The same report shape the Gemini path produces, built from an OCR reading. */
+function buildOcrReport(declarations, analysis, degradedNote) {
+  const heads = [
+    ['manufacturer_name', 'Rule 6(1)(a)', 'Manufacturer / packer / importer',
+      declarations.manufacturer && declarations.manufacturer.name],
+    ['manufacturer_address', 'Rule 6(1)(a)', 'Complete address',
+      declarations.manufacturer && declarations.manufacturer.address],
+    ['generic_name', 'Rule 6(1)(b)', 'Common or generic name', declarations.genericName],
+    ['net_quantity', 'Rule 6(1)(c)', 'Net quantity',
+      declarations.netQuantity && declarations.netQuantity.value != null
+        ? `${declarations.netQuantity.value} ${declarations.netQuantity.unit || ''}`.trim()
+        : null],
+    ['month_year', 'Rule 6(1)(d)', 'Month and year',
+      declarations.monthYear && declarations.monthYear.raw],
+    ['mrp', 'Rule 6(1)(e)', 'Retail sale price',
+      declarations.mrp && declarations.mrp.raw],
+    ['consumer_care', 'Rule 6(2)', 'Consumer care details',
+      [declarations.consumerCare && declarations.consumerCare.phone,
+       declarations.consumerCare && declarations.consumerCare.email]
+        .filter(Boolean)
+        .join(' / ') || null]
+  ];
+
+  const rows = heads.map(([key, citation, label, value]) => ({
+    key,
+    citation,
+    label,
+    value: value || null,
+    status: value ? 'found' : 'not_found'
+  }));
+
+  const found = rows.filter((r) => r.status === 'found').length;
+
+  return {
+    summary: {
+      product: declarations.genericName || 'Unidentified product',
+      brand: null,
+      packageType: null,
+      packageMaterial: null,
+      declarationsFound: found,
+      declarationsTotal: rows.length,
+      completenessPercent: Math.round((found / rows.length) * 100),
+      extractionConfidence: null,
+      regionsDetected: 0,
+      imageHash: analysis.imageHash || null,
+      model: analysis.engine,
+      processingTimeMs: analysis.processingTimeMs || null
+    },
+    declarations: rows,
+    // The model path reads these; OCR does not attempt them.
+    fssai: [
+      { key: 'nutrition', label: 'Nutrition panel', value: null, status: 'not_found' },
+      { key: 'ingredients', label: 'Ingredients list', value: null, status: 'not_found' },
+      { key: 'allergen_declaration', label: 'Allergen declaration', value: null, status: 'not_found' },
+      { key: 'fssai_licence_number', label: 'FSSAI licence number', value: null, status: 'not_found' },
+      { key: 'veg_nonveg_mark', label: 'Veg / non-veg mark', value: null, status: 'not_found' }
+    ],
+    nutrition: null,
+    package: null,
+    detections: [],
+    legibilityIssues: [degradedNote],
+    disclaimer:
+      'This is an extraction report, not a compliance determination. ' + degradedNote
   };
 }
 
@@ -229,4 +358,12 @@ async function status() {
   };
 }
 
-module.exports = { analyze, extract, readTokens, tagUnstructured, status, normalizeTokens };
+module.exports = {
+  analyze,
+  extract,
+  extractViaOcr,
+  readTokens,
+  tagUnstructured,
+  status,
+  normalizeTokens
+};

@@ -147,5 +147,32 @@ class Settings:
         or ""
     )
 
+    # Backup keys, tried in order when the primary cannot be used: revoked,
+    # expired, out of quota. A key that is merely busy is retried rather than
+    # abandoned -- see GEMINI_MAX_ATTEMPTS -- because rotating on a transient
+    # would burn the spare for no reason.
+    #
+    # VLM_API_KEY_2 and VLM_API_KEY_3 are the named slots; VLM_API_KEYS takes a
+    # comma-separated list for anyone who wants more.
+    VLM_API_KEYS = [
+        key
+        for key in [
+            VLM_API_KEY,
+            os.environ.get("VLM_API_KEY_2", ""),
+            os.environ.get("VLM_API_KEY_3", ""),
+            *[k.strip() for k in os.environ.get("VLM_API_KEYS", "").split(",")],
+        ]
+        if key and key.strip()
+    ]
+
+    # When every key is exhausted, fall back to reading the label with the local
+    # OCR engine instead of failing the capture outright. The reading is worse
+    # and is flagged as such, but an officer standing in a shop still gets
+    # something rather than nothing.
+    EXTRACTION_FALLBACK_ENGINE = os.environ.get("EXTRACTION_FALLBACK_ENGINE", "easyocr")
+    EXTRACTION_FALLBACK_ENABLED = (
+        os.environ.get("EXTRACTION_FALLBACK_ENABLED", "true").lower() == "true"
+    )
+
 
 settings = Settings()
