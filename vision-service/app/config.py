@@ -8,6 +8,26 @@ enough to measure and when a measurement is confident enough to assert.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+# Load .env before anything reads the environment.
+#
+# Without this the service starts perfectly happily with no API key and silently
+# falls back to its defaults -- which is how an integration can look finished
+# while only ever having worked from inline shell variables.
+#
+# The project root .env is the shared one (the same file the Node API reads);
+# a vision-service/.env overrides it for local experiments. Real environment
+# variables always win, so Docker and CI are unaffected.
+try:
+    from dotenv import load_dotenv
+
+    _SERVICE_DIR = Path(__file__).resolve().parents[1]
+    for _candidate in (_SERVICE_DIR.parent / ".env", _SERVICE_DIR / ".env"):
+        if _candidate.is_file():
+            load_dotenv(_candidate, override=False)
+except ImportError:  # pragma: no cover - dotenv is optional at runtime
+    pass
 
 
 def _f(name: str, default: float) -> float:
@@ -25,7 +45,17 @@ def _i(name: str, default: int) -> int:
 
 
 class Settings:
-    VERSION = "2.0.0"
+    VERSION = "3.0.0"
+
+    # --- Extraction mode ---------------------------------------------------
+    # "gemini"  the model reads the label; the OCR engines and the millimetre
+    #           measurement stages do not run. This is the active path.
+    # "legacy"  the original OCR + Sauvola/connected-components pipeline.
+    # "hybrid"  both, for comparing one against the other on the same capture.
+    #
+    # The legacy code is left intact and simply not called, so switching back is
+    # a one-line environment change rather than a revert.
+    EXTRACTION_MODE = os.environ.get("EXTRACTION_MODE", "gemini").lower()
 
     # Engine selection. PP-OCRv5 first per the build order: better on small
     # dense print, better multilingual coverage, faster on CPU. The benchmark
@@ -79,11 +109,43 @@ class Settings:
     MEASUREMENT_MARGIN = _f("MEASUREMENT_MARGIN", 0.15)
 
     # --- VLM tagging (build order step 3, optional) ---
+    #
+    # Keys are read from the environment only. Never hard-code one here: this
+    # file is committed, and a key in git history stays there after it is
+    # deleted. Put it in .env, which .gitignore already covers.
     VLM_ENABLED = os.environ.get("VLM_ENABLED", "false").lower() == "true"
-    VLM_PROVIDER = os.environ.get("VLM_PROVIDER", "anthropic")
-    VLM_MODEL = os.environ.get("VLM_MODEL", "claude-sonnet-5")
-    VLM_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-    VLM_TIMEOUT_S = _f("VLM_TIMEOUT_S", 30.0)
+    VLM_PROVIDER = os.environ.get("VLM_PROVIDER", "anthropic").lower()
+    VLM_TIMEOUT_S = _f("VLM_TIMEOUT_S", 60.0)
+    # Gemini 2.5 reasons before answering, which roughly trebles latency on a
+    # transcription task that needs no reasoning. 0 disables it; raise it only
+    # if extraction quality on hard packs actually calls for it.
+    GEMINI_THINKING_BUDGET = _i("GEMINI_THINKING_BUDGET", 0)
+    # Gemini returns 503 when the model is overloaded and 429 on rate limits.
+    # Both are "not now", not "never", so they are retried with backoff rather
+    # than costing an officer the capture they are standing in a shop to take.
+    GEMINI_MAX_ATTEMPTS = _i("GEMINI_MAX_ATTEMPTS", 4)
+    GEMINI_RETRY_BASE_S = _f("GEMINI_RETRY_BASE_S", 1.5)
+
+    # Default model per provider, overridable with VLM_MODEL.
+    _DEFAULT_MODELS = {
+        "anthropic": "claude-sonnet-5",
+        "google": "gemini-2.5-flash",
+        "openai": "gpt-4o",
+    }
+    VLM_MODEL = os.environ.get("VLM_MODEL") or _DEFAULT_MODELS.get(
+        os.environ.get("VLM_PROVIDER", "anthropic").lower(), "claude-sonnet-5"
+    )
+
+    # A generic VLM_API_KEY wins; otherwise fall back to the provider's own
+    # conventional variable, so an existing environment keeps working.
+    VLM_API_KEY = (
+        os.environ.get("VLM_API_KEY")
+        or os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or ""
+    )
 
 
 settings = Settings()

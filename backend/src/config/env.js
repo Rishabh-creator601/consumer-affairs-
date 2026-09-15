@@ -1,4 +1,21 @@
-require('dotenv').config();
+const path = require('path');
+const fs = require('fs');
+
+// dotenv.config() with no path reads process.cwd()/.env, which misses the
+// shared root .env whenever the API is started from the backend/ directory --
+// the usual way. Resolve it relative to this file instead, so the same file
+// serves the Node API and the Python vision service.
+//
+// A backend/.env overrides the root one; real environment variables win over
+// both, leaving Docker and CI untouched.
+for (const candidate of [
+  path.resolve(__dirname, '../../../.env'),
+  path.resolve(__dirname, '../../.env')
+]) {
+  if (fs.existsSync(candidate)) {
+    require('dotenv').config({ path: candidate, override: false });
+  }
+}
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const isProd = NODE_ENV === 'production';
@@ -26,7 +43,38 @@ const parseOrigins = (raw) =>
     .map((o) => o.trim())
     .filter(Boolean);
 
+const parseList = (raw) =>
+  (raw || '')
+    .split(',')
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+
+// The browser-facing origin OAuth redirects land back on.
+const APP_URL = (process.env.APP_URL || parseOrigins(process.env.CLIENT_URL)[0] || 'http://localhost:3000').replace(/\/$/, '');
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const GOOGLE_CALLBACK_URL =
+  process.env.GOOGLE_CALLBACK_URL || `http://localhost:${process.env.PORT || 5000}/api/auth/google/callback`;
+
+// Google sign-in only advertises itself once both halves of the client are set.
+const GOOGLE_ENABLED = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
+
 module.exports = {
+  APP_URL,
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  GOOGLE_CALLBACK_URL,
+  GOOGLE_ENABLED,
+  // Empty list = any Google account may sign up. Set to e.g. "gov.in,nic.in"
+  // to restrict self-registration to official domains.
+  GOOGLE_ALLOWED_DOMAINS: parseList(process.env.GOOGLE_ALLOWED_DOMAINS),
+  // Public sign-up can be turned off without redeploying the frontend.
+  SIGNUP_ENABLED: process.env.SIGNUP_ENABLED !== 'false',
+  // Everyone who self-registers lands on the least-privileged role; a
+  // Controller promotes them from the admin console afterwards.
+  SELF_SIGNUP_ROLE: process.env.SELF_SIGNUP_ROLE || 'field_inspector',
+
   PORT: process.env.PORT || 5000,
   MONGO_URI: process.env.MONGO_URI || 'mongodb://localhost:27017/lm-verify',
   JWT_SECRET,
@@ -38,6 +86,11 @@ module.exports = {
   OCR_SERVICE_URL: process.env.OCR_SERVICE_URL || 'http://localhost:8001',
   UPLOAD_MAX_SIZE: process.env.UPLOAD_MAX_SIZE || '20MB',
   BCRYPT_ROUNDS: Number(process.env.BCRYPT_ROUNDS || 12),
+  // "gemini" makes the model the active extractor and leaves the OCR +
+  // millimetre-measurement pipeline and the rule engine dormant. "legacy"
+  // restores them. The dormant code is untouched, so switching back is an
+  // environment change rather than a revert.
+  EXTRACTION_MODE: (process.env.EXTRACTION_MODE || 'gemini').toLowerCase(),
   CORS_ORIGINS: parseOrigins(process.env.CLIENT_URL),
   COOKIE_SECURE: process.env.COOKIE_SECURE === 'true' || isProd,
   MAX_LOGIN_ATTEMPTS: Number(process.env.MAX_LOGIN_ATTEMPTS || 5),

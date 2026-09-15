@@ -77,7 +77,9 @@ const inspectionSchema = new mongoose.Schema({
     required: String,
     verdict: {
       type: String,
-      enum: ['PASS', 'FAIL', 'REVIEW', 'NOT_APPLICABLE']
+      // NOT_ASSESSED is distinct from REVIEW: review means the system tried and
+      // hesitated; not-assessed means this build never attempts the check.
+      enum: ['PASS', 'FAIL', 'REVIEW', 'NOT_APPLICABLE', 'NOT_ASSESSED']
     },
     // The rule modules report a qualitative band ('HIGH'), while OCR-derived
     // results carry a numeric probability - both are stored as written.
@@ -90,6 +92,7 @@ const inspectionSchema = new mongoose.Schema({
       default: false
     },
     overrideVerdict: String,
+    note: String,
     overrideReason: String,
     overrideBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -108,6 +111,11 @@ const inspectionSchema = new mongoose.Schema({
     default: 'draft'
   },
   rulePackVersion: String,
+  // Client-facing extraction report produced by the Gemini path. Stored whole
+  // so the report an officer downloaded can be reproduced exactly later.
+  extractionReport: mongoose.Schema.Types.Mixed,
+  // Counts, resolved category and scope-gate outcome for the evaluated rows.
+  complianceSummary: mongoose.Schema.Types.Mixed,
   remarks: String,
   penalties: {
     total: Number,

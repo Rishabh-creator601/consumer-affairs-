@@ -11,11 +11,20 @@ interface LoginResponse {
   user: User;
 }
 
+export interface SignupInput {
+  displayName: string;
+  email: string;
+  password: string;
+  jurisdiction?: string;
+}
+
 interface AuthContextValue {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<User>;
+  signup: (input: SignupInput) => Promise<User>;
+  resumeSession: () => Promise<User | null>;
   logout: (options?: { everywhere?: boolean }) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<string>;
   refreshUser: () => Promise<void>;
@@ -105,6 +114,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [scheduleSilentRefresh]
   );
 
+  const signup = useCallback(
+    async ({ displayName, email, password, jurisdiction }: SignupInput) => {
+      const session = await post<LoginResponse>('/auth/signup', {
+        displayName,
+        email,
+        password,
+        ...(jurisdiction ? { jurisdiction } : {}),
+      });
+      setAccessToken(session.accessToken);
+      setUser(session.user);
+      scheduleSilentRefresh();
+      return session.user;
+    },
+    [scheduleSilentRefresh]
+  );
+
+  /**
+   * Adopts the session the API just established out-of-band. The Google
+   * callback lands with only the httpOnly refresh cookie set, so the app trades
+   * it for an access token instead of reading anything out of the URL.
+   */
+  const resumeSession = useCallback(async () => {
+    try {
+      const session = await post<LoginResponse>('/auth/refresh');
+      setAccessToken(session.accessToken);
+      const nextUser = session.user ?? (await get<User>('/auth/me'));
+      setUser(nextUser);
+      scheduleSilentRefresh();
+      return nextUser;
+    } catch {
+      clearSession();
+      return null;
+    }
+  }, [clearSession, scheduleSilentRefresh]);
+
   const logout = useCallback(
     async ({ everywhere = false }: { everywhere?: boolean } = {}) => {
       try {
@@ -147,12 +191,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated: !!user,
       isLoading,
       login,
+      signup,
+      resumeSession,
       logout,
       changePassword,
       refreshUser,
       hasRole,
     }),
-    [user, isLoading, login, logout, changePassword, refreshUser, hasRole]
+    [user, isLoading, login, signup, resumeSession, logout, changePassword, refreshUser, hasRole]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

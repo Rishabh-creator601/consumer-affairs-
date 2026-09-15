@@ -52,6 +52,19 @@ const COMMODITIES = [
   'bidi', 'incense', 'agarbatti', 'paint', 'varnish', 'yarn', 'garment', 'garments'
 ];
 
+// Company forms and address words. Flagging "Pvt Ltd" on every Indian pack
+// would train an officer to ignore the advisory entirely.
+const ENTITY_TERMS = [
+  'pvt', 'private', 'ltd', 'limited', 'llp', 'inc', 'co', 'corp', 'corporation',
+  'company', 'industries', 'enterprises', 'foods', 'products', 'brands', 'group',
+  'works', 'mills', 'traders', 'agencies', 'exports', 'imports', 'international',
+  'road', 'street', 'lane', 'marg', 'nagar', 'colony', 'sector', 'phase', 'plot',
+  'block', 'floor', 'building', 'estate', 'industrial', 'area', 'park', 'town',
+  'city', 'district', 'state', 'pin', 'post', 'village', 'taluka', 'tehsil',
+  'delhi', 'mumbai', 'kolkata', 'chennai', 'bengaluru', 'bangalore', 'hyderabad',
+  'pune', 'ahmedabad', 'surat', 'jaipur', 'lucknow', 'kanpur', 'nagpur', 'indore'
+];
+
 const DESCRIPTORS = [
   'fresh', 'pure', 'natural', 'organic', 'premium', 'classic', 'original', 'special',
   'gold', 'silver', 'royal', 'super', 'extra', 'double', 'rich', 'creamy', 'crispy', 'crunchy',
@@ -60,7 +73,7 @@ const DESCRIPTORS = [
 ];
 
 const LEXICON = new Set(
-  [...STATUTORY_TERMS, ...UNITS, ...CURRENCY, ...COMMODITIES, ...DESCRIPTORS].map((w) =>
+  [...STATUTORY_TERMS, ...UNITS, ...CURRENCY, ...COMMODITIES, ...DESCRIPTORS, ...ENTITY_TERMS].map((w) =>
     w.toLowerCase()
   )
 );

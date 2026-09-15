@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { ReportDownloader } from '@/components/reports/ReportDownloader';
 import { ChecklistTable } from '@/components/inspection/ChecklistTable';
+import { ExtractionReport } from '@/components/inspection/ExtractionReport';
 import { DeclarationTable } from '@/components/inspection/DeclarationTable';
 import { OcrTokenTable } from '@/components/inspection/OcrTokenTable';
 import { SpellCheckPanel } from '@/components/inspection/SpellCheckPanel';
@@ -25,13 +26,13 @@ const effectiveVerdict = (r: ComplianceResult): RuleVerdict =>
 const asRef = (value: unknown): PopulatedRef | null =>
   value && typeof value === 'object' ? (value as PopulatedRef) : null;
 
-type Tab = 'checklist' | 'declarations' | 'tokens';
+type Tab = 'checklist' | 'compliance' | 'declarations' | 'tokens';
 
 export default function ResultsPage({ params }: { params: { id: string } }) {
   const { user } = useAuth();
   const inspection = useApi(() => inspectionService.byId(params.id), [params.id]);
 
-  const [tab, setTab] = useState<Tab>('checklist');
+  const [tab, setTab] = useState<Tab | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [overrideTarget, setOverrideTarget] = useState<ComplianceResult | null>(null);
@@ -111,11 +112,28 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
   const officer = asRef(data.officerId);
   const additional = data.extracted?.additionalInfo;
 
-  const tabs: Array<{ key: Tab; label: string; count?: number }> = [
-    { key: 'checklist', label: 'Compliance checklist', count: data.results.length },
-    { key: 'declarations', label: 'Statutory declarations', count: 7 },
-    { key: 'tokens', label: 'Raw OCR', count: data.ocrTokens?.length ?? 0 },
-  ];
+  // Extraction mode: the model read the label and the rule engine is dormant,
+  // so there is no checklist to show and no verdict to claim.
+  const isExtractionMode = Boolean(data.extractionReport);
+
+  const hasVerdicts = data.results.length > 0;
+
+  // Land on the most decided view available.
+  const activeTab: Tab = tab ?? (hasVerdicts ? 'compliance' : 'checklist');
+
+  const tabs: Array<{ key: Tab; label: string; count?: number }> = isExtractionMode
+    ? [
+        ...(hasVerdicts
+          ? [{ key: 'compliance' as Tab, label: 'Compliance', count: data.results.length }]
+          : []),
+        { key: 'checklist', label: 'Extraction report' },
+        { key: 'declarations', label: 'Statutory declarations', count: 7 },
+      ]
+    : [
+        { key: 'checklist', label: 'Compliance checklist', count: data.results.length },
+        { key: 'declarations', label: 'Statutory declarations', count: 7 },
+        { key: 'tokens', label: 'Raw OCR', count: data.ocrTokens?.length ?? 0 },
+      ];
 
   return (
     <div className="mx-auto max-w-7xl p-4 lg:p-8">
@@ -135,10 +153,16 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
             <span className="chip border-cyan-200 bg-cyan-50 text-cyan-800">
               {STATUS_LABELS[data.status] || data.status}
             </span>
-            {additional?.ocrEngine && (
-              <span className="chip border-cyan-200 bg-white text-cyan-700">
-                OCR: {additional.ocrEngine}
+            {isExtractionMode ? (
+              <span className="chip border-cyan-300 bg-cyan-50 text-cyan-800">
+                Extraction only · {data.extractionReport?.summary.model || 'model'}
               </span>
+            ) : (
+              additional?.ocrEngine && (
+                <span className="chip border-cyan-200 bg-white text-cyan-700">
+                  OCR: {additional.ocrEngine}
+                </span>
+              )
             )}
           </div>
           <p className="page-subtitle">
@@ -158,11 +182,15 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
               onClick={() => runAction('evaluate', () => inspectionService.evaluate(data._id))}
             >
               <ScanSearch className="h-4 w-4" aria-hidden="true" />
-              Re-run rule engine
+              {hasVerdicts ? 'Re-run compliance check' : 'Run compliance check'}
             </Button>
           )}
-          <ReportDownloader inspectionId={data._id} inspectionRef={data.ref} />
-          {canAdjudicate && (
+          <ReportDownloader
+            inspectionId={data._id}
+            inspectionRef={data.ref}
+            extractionOnly={isExtractionMode}
+          />
+          {canAdjudicate && hasVerdicts && (
             <Button onClick={() => setAdjudicateOpen(true)}>
               <Gavel className="h-4 w-4" aria-hidden="true" />
               Adjudicate
@@ -177,6 +205,7 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
+      {hasVerdicts && (
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
         {[
           { label: 'Passed', value: summary.pass, tone: 'text-verdict-pass' },
@@ -195,6 +224,7 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
           </div>
         ))}
       </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="xl:col-span-2">
@@ -204,7 +234,7 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
                 key={t.key}
                 onClick={() => setTab(t.key)}
                 className={`focus-ring -mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
-                  tab === t.key
+                  activeTab === t.key
                     ? 'border-cyan-bright text-cyan-900'
                     : 'border-transparent text-slate-500 hover:text-cyan-800'
                 }`}
@@ -217,7 +247,77 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
             ))}
           </div>
 
-          {tab === 'checklist' && (
+          {activeTab === 'compliance' && isExtractionMode && (
+            <div className="flex flex-col gap-4">
+              {data.complianceSummary && (
+                <section className="card p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="section-title">
+                        {data.complianceSummary.categoryName || data.complianceSummary.category}
+                      </h2>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {data.complianceSummary.categoryMatchedOn
+                          ? `Category matched on "${data.complianceSummary.categoryMatchedOn}"`
+                          : 'No category matched; baseline declarations only'}
+                        {data.complianceSummary.rulePackVersion
+                          ? ` \u00b7 rule pack v${data.complianceSummary.rulePackVersion}`
+                          : ''}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-3 text-center">
+                      {[
+                        ['Passed', data.complianceSummary.passed, 'text-verdict-pass'],
+                        ['Failed', data.complianceSummary.failed, 'text-verdict-fail'],
+                        ['Review', data.complianceSummary.review, 'text-verdict-review'],
+                        ['N/A', data.complianceSummary.notApplicable, 'text-slate-500'],
+                        ['Not assessed', data.complianceSummary.notAssessed, 'text-cyan-700'],
+                      ].map(([label, count, tone]) => (
+                        <div key={String(label)}>
+                          <p className={`text-xl font-bold ${tone}`}>{count as number}</p>
+                          <p className="text-[11px] text-slate-500">{label as string}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {data.complianceSummary.inScope === false && data.complianceSummary.scope && (
+                    <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                      <strong>
+                        Outside Chapter II \u2014 {data.complianceSummary.scope.citation}.
+                      </strong>{' '}
+                      {data.complianceSummary.scope.reason}
+                    </p>
+                  )}
+                </section>
+              )}
+
+              <ChecklistTable
+                results={data.results}
+                rulePackVersion={data.rulePackVersion}
+                canOverride={canAdjudicate}
+                onOverride={(result) => {
+                  setOverrideTarget(result);
+                  setOverrideVerdict(effectiveVerdict(result));
+                  setOverrideReason(result.overrideReason || '');
+                }}
+              />
+
+              <p className="rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-xs leading-relaxed text-cyan-900">
+                Verdicts come from the deterministic rule pack applied to the extracted
+                declarations \u2014 the model read the label, code decided the outcome. Rules
+                prescribing a measurement in millimetres (7(2), 7(3), 8(1)) and the 9(1)(b)
+                contrast ratio read <strong>Not assessed</strong>: this path reads the label
+                but does not measure it.
+              </p>
+            </div>
+          )}
+
+          {activeTab === 'checklist' && isExtractionMode && (
+            <ExtractionReport report={data.extractionReport} />
+          )}
+
+          {activeTab === 'checklist' && !isExtractionMode && (
             <ChecklistTable
               results={data.results}
               rulePackVersion={data.rulePackVersion}
@@ -230,25 +330,29 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
             />
           )}
 
-          {tab === 'declarations' && <DeclarationTable extracted={data.extracted} />}
+          {activeTab === 'declarations' && <DeclarationTable extracted={data.extracted} />}
 
-          {tab === 'tokens' && (
+          {activeTab === 'tokens' && (
             <OcrTokenTable tokens={data.ocrTokens ?? []} engine={additional?.ocrEngine} />
           )}
         </div>
 
         <div className="flex flex-col gap-6">
+          {!isExtractionMode && (
           <MeasurementPanel
             measurements={additional?.visionMeasurements}
             engine={additional?.ocrEngine}
             warnings={additional?.visionWarnings}
           />
+          )}
 
+          {!isExtractionMode && (
           <SpellCheckPanel
             result={spellRow?.spellCheck}
             found={spellRow?.found}
             note={spellRow?.note}
           />
+          )}
 
           {data.remarks && (
             <section className="card p-5">

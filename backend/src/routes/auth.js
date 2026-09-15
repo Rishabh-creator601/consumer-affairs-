@@ -9,8 +9,23 @@ const {
   validate,
   loginSchema,
   registerSchema,
+  signupSchema,
   changePasswordSchema
 } = require('../utils/validators');
+const {
+  APP_URL,
+  GOOGLE_ENABLED,
+  SIGNUP_ENABLED,
+  SELF_SIGNUP_ROLE,
+  COOKIE_SECURE
+} = require('../config/env');
+const {
+  randomToken,
+  buildAuthUrl,
+  exchangeCode,
+  verifyIdToken,
+  isDomainAllowed
+} = require('../services/googleOAuth');
 const {
   signAccessToken,
   signRefreshToken,
@@ -29,6 +44,15 @@ const loginLimiter = rateLimit({
 });
 
 const refreshLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 60, keyPrefix: 'refresh' });
+
+const signupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyPrefix: 'signup',
+  message: 'Too many accounts created from this network. Please try again later.'
+});
+
+const oauthLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, keyPrefix: 'oauth' });
 
 const record = (req, action, outcome, extra = {}) =>
   AuditLog.logAction({
@@ -84,6 +108,186 @@ router.post(
     }
   }
 );
+
+// Cookies carrying the OAuth state and nonce. Short-lived: they only need to
+// survive the round trip to Google's consent screen.
+const OAUTH_STATE_COOKIE = 'lmv_oauth_state';
+const OAUTH_NONCE_COOKIE = 'lmv_oauth_nonce';
+const OAUTH_COOKIE_MAX_AGE = 10 * 60 * 1000;
+
+const oauthCookieOptions = {
+  httpOnly: true,
+  secure: COOKIE_SECURE,
+  // 'lax' is required: Google's redirect back is a cross-site top-level GET, and
+  // 'strict' would stop the browser sending these cookies on that navigation.
+  sameSite: COOKIE_SECURE ? 'none' : 'lax',
+  path: '/api/auth',
+  maxAge: OAUTH_COOKIE_MAX_AGE
+};
+
+const clearOAuthCookies = (res) => {
+  const opts = { ...oauthCookieOptions };
+  delete opts.maxAge;
+  res.clearCookie(OAUTH_STATE_COOKIE, opts);
+  res.clearCookie(OAUTH_NONCE_COOKIE, opts);
+};
+
+/** Sends the browser back to the app's OAuth landing page with an outcome. */
+const redirectToApp = (res, params) =>
+  res.redirect(`${APP_URL}/auth/callback?${new URLSearchParams(params).toString()}`);
+
+// GET /api/auth/providers - lets the sign-in UI show only what actually works
+router.get('/providers', (req, res) => {
+  res.status(200).json({
+    success: true,
+    data: { password: true, google: GOOGLE_ENABLED, signupEnabled: SIGNUP_ENABLED }
+  });
+});
+
+// POST /api/auth/signup - public self-registration
+router.post('/signup', signupLimiter, validate(signupSchema), async (req, res, next) => {
+  try {
+    if (!SIGNUP_ENABLED) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          message: 'Self-registration is disabled. Ask your Controller to provision an account.',
+          code: 403
+        }
+      });
+    }
+
+    const { email, password, displayName, jurisdiction } = req.body;
+
+    if (await User.findOne({ email })) {
+      return res.status(409).json({
+        success: false,
+        error: { message: 'An account with that email already exists', code: 409 }
+      });
+    }
+
+    const user = await User.create({
+      email,
+      passwordHash: password, // hashed by the pre-save hook
+      // Never taken from the request body: self-registration always yields the
+      // least-privileged role, and a Controller promotes from there.
+      role: SELF_SIGNUP_ROLE,
+      jurisdiction: jurisdiction || 'Unassigned',
+      displayName,
+      authProvider: 'local'
+    });
+
+    const session = await issueSession(res, user);
+    record(req, 'auth.signup', 'success', { role: SELF_SIGNUP_ROLE });
+    res.status(201).json({ success: true, data: session });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/auth/google - starts the consent round trip
+router.get('/google', oauthLimiter, (req, res, next) => {
+  try {
+    if (!GOOGLE_ENABLED) {
+      return redirectToApp(res, { error: 'google_not_configured' });
+    }
+
+    const state = randomToken();
+    const nonce = randomToken();
+
+    res.cookie(OAUTH_STATE_COOKIE, state, oauthCookieOptions);
+    res.cookie(OAUTH_NONCE_COOKIE, nonce, oauthCookieOptions);
+
+    res.redirect(buildAuthUrl({ state, nonce }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/auth/google/callback - Google redirects the browser back here
+router.get('/google/callback', oauthLimiter, async (req, res, next) => {
+  const fail = (reason) => {
+    clearOAuthCookies(res);
+    record(req, 'auth.google', 'failure', { reason });
+    return redirectToApp(res, { error: reason });
+  };
+
+  try {
+    if (!GOOGLE_ENABLED) return fail('google_not_configured');
+    if (req.query.error) return fail('consent_denied');
+
+    const { code, state } = req.query;
+    const expectedState = req.cookies && req.cookies[OAUTH_STATE_COOKIE];
+    const expectedNonce = req.cookies && req.cookies[OAUTH_NONCE_COOKIE];
+
+    if (!code) return fail('missing_code');
+    if (!state || !expectedState || state !== expectedState) return fail('state_mismatch');
+
+    const idToken = await exchangeCode(String(code));
+    const profile = await verifyIdToken(idToken, expectedNonce);
+
+    if (!isDomainAllowed(profile.email, profile.hostedDomain)) {
+      return fail('domain_not_allowed');
+    }
+
+    // Match on the Google subject first, then fall back to email so an officer
+    // provisioned with a password can link Google to the same account.
+    let user =
+      (await User.findOne({ googleId: profile.googleId }).select('+googleId')) ||
+      (await User.findOne({ email: profile.email }).select('+googleId'));
+
+    if (user) {
+      if (!user.isActive) return fail('account_inactive');
+
+      let dirty = false;
+      if (!user.googleId) {
+        user.googleId = profile.googleId;
+        dirty = true;
+      }
+      if (!user.avatarUrl && profile.avatarUrl) {
+        user.avatarUrl = profile.avatarUrl;
+        dirty = true;
+      }
+      if (profile.emailVerified && !user.emailVerified) {
+        user.emailVerified = true;
+        dirty = true;
+      }
+      if (dirty) await user.save();
+
+      await user.registerSuccessfulLogin();
+      record(req, 'auth.google', 'success', { linked: true, userId: user._id });
+    } else {
+      if (!SIGNUP_ENABLED) return fail('signup_disabled');
+
+      user = await User.create({
+        email: profile.email,
+        googleId: profile.googleId,
+        role: SELF_SIGNUP_ROLE,
+        jurisdiction: 'Unassigned',
+        displayName: profile.displayName,
+        avatarUrl: profile.avatarUrl,
+        emailVerified: profile.emailVerified,
+        authProvider: 'google'
+        // No passwordHash: this account signs in through Google until the
+        // officer sets a password from their profile.
+      });
+
+      record(req, 'auth.google', 'success', { created: true, userId: user._id });
+    }
+
+    clearOAuthCookies(res);
+    await issueSession(res, user);
+
+    // The access token is not put in the URL - the app calls /auth/refresh with
+    // the httpOnly cookie that issueSession just set.
+    return redirectToApp(res, { status: 'ok' });
+  } catch (error) {
+    if (error && /nonce|id_token|authorization code|signing key/i.test(error.message)) {
+      return fail('token_verification_failed');
+    }
+    return next(error);
+  }
+});
 
 // POST /api/auth/login
 router.post('/login', loginLimiter, validate(loginSchema), async (req, res, next) => {

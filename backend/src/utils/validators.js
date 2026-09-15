@@ -24,6 +24,15 @@ const registerSchema = z.object({
   displayName: z.string().trim().min(2, 'Display name is required').max(120)
 });
 
+// Public self-registration. Deliberately narrower than registerSchema: the
+// caller cannot choose a role, so it can never mint a Controller.
+const signupSchema = z.object({
+  email: z.string().trim().toLowerCase().email('A valid email address is required'),
+  password: passwordSchema,
+  displayName: z.string().trim().min(2, 'Full name is required').max(120),
+  jurisdiction: z.string().trim().max(120).optional()
+});
+
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Current password is required'),
   newPassword: passwordSchema
@@ -60,6 +69,7 @@ module.exports = {
   validate,
   loginSchema,
   registerSchema,
+  signupSchema,
   changePasswordSchema,
   updateUserSchema,
   passwordSchema

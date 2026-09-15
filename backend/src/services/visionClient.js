@@ -12,13 +12,17 @@ const { analyzeImage, getServiceStatus } = require('./ocrStub');
 
 const VISION_TIMEOUT_MS = Number(process.env.VISION_TIMEOUT_MS || 30000);
 
+// Gemini extraction is a model round trip, not a local CV pass, so it gets its
+// own longer budget: ~10s typical, and the sidecar retries upstream 503s.
+const EXTRACT_TIMEOUT_MS = Number(process.env.EXTRACT_TIMEOUT_MS || 120000);
+
 const isFetchAvailable = () => typeof fetch === 'function' && typeof FormData !== 'undefined';
 
-async function callVision(path, { file, fields = {}, method = 'POST' } = {}) {
+async function callVision(path, { file, fields = {}, method = 'POST', timeoutMs } = {}) {
   if (!isFetchAvailable()) return null;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), VISION_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs || VISION_TIMEOUT_MS);
 
   try {
     const options = { method, signal: controller.signal };
@@ -171,6 +175,37 @@ async function tagUnstructured(file, tokens = []) {
   return payload && payload.data ? payload.data : null;
 }
 
+/**
+ * Gemini label extraction and object detection -- the active path.
+ *
+ * Returns the transcribed declarations mapped onto the Inspection schema, the
+ * located regions with pixel boxes, and a client report. Returns null when the
+ * sidecar is unreachable or Gemini is not configured, so the caller can say so
+ * rather than silently substituting a worse reading.
+ */
+async function extract(file, { buildReport = true, model } = {}) {
+  const payload = await callVision('/extract', {
+    file,
+    fields: { build_report: String(buildReport), model },
+    timeoutMs: EXTRACT_TIMEOUT_MS
+  });
+
+  if (!payload || !payload.data) return null;
+
+  const { extraction, declarations, report, imageHash, mode } = payload.data;
+
+  return {
+    extraction,
+    declarations,
+    report: report || null,
+    imageHash,
+    mode,
+    detections: (extraction && extraction.detections) || [],
+    engine: (extraction && extraction._meta && extraction._meta.model) || 'gemini',
+    usage: (extraction && extraction._meta && extraction._meta.usage) || null
+  };
+}
+
 async function status() {
   const payload = await callVision('/health', { method: 'GET' });
 
@@ -194,4 +229,4 @@ async function status() {
   };
 }
 
-module.exports = { analyze, readTokens, tagUnstructured, status, normalizeTokens };
+module.exports = { analyze, extract, readTokens, tagUnstructured, status, normalizeTokens };

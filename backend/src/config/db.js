@@ -39,6 +39,21 @@ const connectDB = async () => {
   }
 };
 
+/**
+ * Binds the GridFS bucket to an existing connection.
+ *
+ * connectDB does this itself; this is exported so a test (or any caller that
+ * manages its own connection) can enable file storage without re-running the
+ * whole connect-and-seed path.
+ */
+const initGridFSBucket = (connection) => {
+  const db = (connection && connection.db) || mongoose.connection.db;
+  if (!db) throw new Error('Cannot initialise GridFS before a database connection exists.');
+
+  gridFSBucket = new mongoose.mongo.GridFSBucket(db, { bucketName: 'uploads' });
+  return gridFSBucket;
+};
+
 const getGridFSBucket = () => {
   if (!gridFSBucket) {
     throw new Error('GridFSBucket has not been initialized. Please connect to MongoDB first.');
@@ -46,4 +61,4 @@ const getGridFSBucket = () => {
   return gridFSBucket;
 };
 
-module.exports = { connectDB, getGridFSBucket };
+module.exports = { connectDB, getGridFSBucket, initGridFSBucket };

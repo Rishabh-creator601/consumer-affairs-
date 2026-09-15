@@ -43,9 +43,12 @@ services:
         OCR_ENGINE: ${OCR_ENGINE:-none}
     environment:
       OCR_ENGINE: ${OCR_ENGINE:-paddleocr}
-      # Optional VLM pass over the two unstructured declaration heads.
+      # Optional VLM pass. Values come from .env, never written here -- this
+      # file is committed and a key in git history outlives its deletion.
       VLM_ENABLED: ${VLM_ENABLED:-false}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      VLM_PROVIDER: ${VLM_PROVIDER:-anthropic}
+      VLM_MODEL: ${VLM_MODEL:-}
+      VLM_API_KEY: ${VLM_API_KEY:-}
     ports:
       - "8001:8001"
     networks:

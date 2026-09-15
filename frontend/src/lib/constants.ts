@@ -40,6 +40,18 @@ export const VERDICT_STYLES: Record<string, { label: string; className: string; 
     className: 'bg-slate-100 text-slate-600 border-slate-200',
     dot: 'bg-slate-400',
   },
+  // Distinct from REVIEW on purpose: review means the system tried and
+  // hesitated; not-assessed means this path never attempts the check.
+  NOT_ASSESSED: {
+    label: 'Not Assessed',
+    className: 'bg-cyan-50 text-cyan-700 border-cyan-200 border-dashed',
+    dot: 'bg-cyan-400',
+  },
+  not_applicable: {
+    label: 'Out of Scope',
+    className: 'bg-slate-100 text-slate-600 border-slate-200',
+    dot: 'bg-slate-400',
+  },
   compliant: {
     label: 'Compliant',
     className: 'bg-verdict-pass/10 text-verdict-pass border-verdict-pass/25',

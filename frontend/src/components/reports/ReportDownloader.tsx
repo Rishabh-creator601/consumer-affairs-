@@ -9,6 +9,11 @@ import { ApiError } from '@/lib/api';
 interface ReportDownloaderProps {
   inspectionId: string;
   inspectionRef?: string;
+  /**
+   * Extraction mode produces a record of a reading, not a document meant to be
+   * edited afterwards, so DOCX is not offered for it.
+   */
+  extractionOnly?: boolean;
 }
 
 const FORMATS = [
@@ -17,7 +22,11 @@ const FORMATS = [
   { key: 'xlsx' as const, label: 'XLSX (data)', icon: FileSpreadsheet },
 ];
 
-export function ReportDownloader({ inspectionId, inspectionRef }: ReportDownloaderProps) {
+export function ReportDownloader({
+  inspectionId,
+  inspectionRef,
+  extractionOnly = false,
+}: ReportDownloaderProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [loadingFormat, setLoadingFormat] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +77,7 @@ export function ReportDownloader({ inspectionId, inspectionRef }: ReportDownload
         className="focus-ring inline-flex items-center gap-2 rounded-lg border border-cyan-300 bg-white px-4 py-2 text-sm font-medium text-cyan-800 transition-colors hover:bg-cyan-50"
       >
         <Download className="h-4 w-4" aria-hidden="true" />
-        Download report
+        {extractionOnly ? 'Download extraction report' : 'Download report'}
         <ChevronDown className="h-4 w-4 opacity-60" aria-hidden="true" />
       </button>
 
@@ -77,7 +86,7 @@ export function ReportDownloader({ inspectionId, inspectionRef }: ReportDownload
           role="menu"
           className="animate-fade-in absolute right-0 z-20 mt-2 w-60 overflow-hidden rounded-lg border border-cyan-200 bg-white shadow-card-hover"
         >
-          {FORMATS.map(({ key, label, icon: Icon }) => (
+          {FORMATS.filter((f) => !(extractionOnly && f.key === 'docx')).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               role="menuitem"

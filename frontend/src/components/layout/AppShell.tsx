@@ -7,7 +7,11 @@ import { ROUTE_ACCESS } from '@/lib/constants';
 import Sidebar from './Sidebar';
 import { Header } from './Header';
 
-const PUBLIC_ROUTES = ['/login'];
+const PUBLIC_ROUTES = ['/login', '/signup', '/auth/callback'];
+
+// The OAuth landing page finishes its own redirect once the session resolves,
+// so the shell must not race it by bouncing an authenticated visitor away.
+const SELF_ROUTING_ROUTES = ['/auth/callback'];
 
 function BrandedSplash({ message }: { message: string }) {
   return (
@@ -37,6 +41,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const isPublic = PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
+  const isSelfRouting = SELF_ROUTING_ROUTES.some((route) => pathname.startsWith(route));
 
   useEffect(() => {
     if (isLoading) return;
@@ -46,10 +51,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    if (isAuthenticated && isPublic) {
+    if (isAuthenticated && isPublic && !isSelfRouting) {
       router.replace('/dashboard');
     }
-  }, [isAuthenticated, isLoading, isPublic, pathname, router]);
+  }, [isAuthenticated, isLoading, isPublic, isSelfRouting, pathname, router]);
 
   useEffect(() => {
     setMobileNavOpen(false);

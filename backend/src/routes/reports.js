@@ -8,6 +8,11 @@ const Report = require('../models/Report');
 const Inspection = require('../models/Inspection');
 const { getGridFSBucket } = require('../config/db');
 const { generatePDF, generateDOCX, generateXLSX } = require('../services/reportService');
+const {
+  generateExtractionPDF,
+  generateExtractionXLSX
+} = require('../services/extractionReportService');
+const { EXTRACTION_MODE } = require('../config/env');
 const { saveToGridFS } = require('../services/imageService');
 const { computeHash } = require('../utils/hashUtils');
 
@@ -78,9 +83,47 @@ router.post(
       const product = inspection.productId;
 
       let buffer;
-      if (format === 'pdf') buffer = await generatePDF(inspection, product, { verifyUrl });
-      else if (format === 'docx') buffer = await generateDOCX(inspection, product);
-      else buffer = Buffer.from(await generateXLSX(inspection, product));
+
+      if (EXTRACTION_MODE === 'gemini') {
+        // Extraction mode produces a client extraction report, not a compliance
+        // certificate -- there are no verdicts to certify while the rule engine
+        // is dormant. DOCX is not offered here because the extraction report is
+        // a record of a reading, not a document meant to be edited afterwards.
+        const report = inspection.extractionReport;
+
+        if (!report) {
+          return res.status(409).json({
+            success: false,
+            error: {
+              message:
+                'This inspection has no extraction yet. Capture an image first, then ' +
+                'download the report.',
+              code: 409
+            }
+          });
+        }
+
+        if (format === 'docx') {
+          return res.status(400).json({
+            success: false,
+            error: {
+              message: 'Extraction reports are available as PDF or XLSX.',
+              code: 400
+            }
+          });
+        }
+
+        buffer =
+          format === 'pdf'
+            ? await generateExtractionPDF(inspection, report)
+            : Buffer.from(await generateExtractionXLSX(inspection, report));
+      } else if (format === 'pdf') {
+        buffer = await generatePDF(inspection, product, { verifyUrl });
+      } else if (format === 'docx') {
+        buffer = await generateDOCX(inspection, product);
+      } else {
+        buffer = Buffer.from(await generateXLSX(inspection, product));
+      }
 
       const fileId = await saveToGridFS(
         getGridFSBucket(),

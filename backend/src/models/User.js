@@ -15,15 +15,41 @@ const userSchema = new mongoose.Schema({
       'Please add a valid email'
     ]
   },
+  // Optional: an account created through Google has no local password until
+  // the officer sets one. Every read path must tolerate its absence.
   passwordHash: {
     type: String,
-    required: true,
     select: false
   },
   role: {
     type: String,
     enum: ['field_inspector', 'senior_inspector', 'controller', 'legal_officer', 'auditor'],
     required: true
+  },
+  // Google's stable subject id. Sparse so local-only accounts don't collide on null.
+  googleId: {
+    type: String,
+    unique: true,
+    sparse: true,
+    select: false
+  },
+  authProvider: {
+    type: String,
+    enum: ['local', 'google'],
+    default: 'local'
+  },
+  emailVerified: {
+    type: Boolean,
+    default: false
+  },
+  avatarUrl: {
+    type: String
+  },
+  // Mirrors "passwordHash is set". Kept as its own field because passwordHash
+  // is select:false, so deriving this on a normal read would always say false.
+  hasPassword: {
+    type: Boolean,
+    default: false
   },
   jurisdiction: {
     type: String
@@ -79,11 +105,12 @@ const userSchema = new mongoose.Schema({
 
 // Hash the password whenever it is set or changed.
 userSchema.pre('save', async function (next) {
-  if (!this.isModified('passwordHash')) return next();
+  if (!this.isModified('passwordHash') || !this.passwordHash) return next();
 
   try {
     const salt = await bcrypt.genSalt(BCRYPT_ROUNDS);
     this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
+    this.hasPassword = true;
     this.passwordChangedAt = new Date();
     if (!this.isNew) this.tokenVersion += 1;
     next();
@@ -147,6 +174,10 @@ userSchema.methods.toSafeJSON = function () {
     role: this.role,
     jurisdiction: this.jurisdiction,
     isActive: this.isActive,
+    authProvider: this.authProvider,
+    emailVerified: this.emailVerified,
+    avatarUrl: this.avatarUrl,
+    hasPassword: this.hasPassword,
     mfaEnabled: this.mfaEnabled,
     lastLogin: this.lastLogin,
     createdAt: this.createdAt

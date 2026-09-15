@@ -15,6 +15,8 @@ const {
 } = require('../services/extractionService');
 const { evaluateCompliance } = require('../services/ruleEngine');
 const visionClient = require('../services/visionClient');
+const { EXTRACTION_MODE } = require('../config/env');
+const { evaluateExtraction, deriveVerdict } = require('../services/geminiCompliance');
 
 router.use(protect);
 router.use(audit);
@@ -103,14 +105,17 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// POST /api/inspections/:id/vision - capture an image and run the full pipeline
+// POST /api/inspections/:id/vision - capture an image and extract from it
 //
-// This is the path that turns Rule 7 from a guess into a measurement: the image
-// goes to the vision sidecar, which rectifies it, derives mm/px from the
-// reference in frame, and measures glyph height, contrast and clear space. The
-// officer's capture answers (which panel, whether the pack is moulded, the
-// reference width) travel with it, because those are questions a person answers
-// better than a segmenter.
+// EXTRACTION_MODE decides what runs:
+//
+//   "gemini"  the model transcribes the label and locates its regions. The OCR
+//             engines, the millimetre measurement stages and the rule engine
+//             are dormant -- no verdicts are produced, only what was read.
+//   "legacy"  the original OCR + Sauvola/connected-components pipeline, which
+//             measures glyph heights and feeds the statutory rule engine.
+//
+// The dormant path is left in the codebase and simply not called.
 router.post(
   '/:id/vision',
   authorize('field_inspector', 'senior_inspector', 'controller'),
@@ -127,6 +132,47 @@ router.post(
           .json({ success: false, error: { message: 'An image file is required', code: 400 } });
       }
 
+      // --- active path: Gemini extraction ---------------------------------
+      if (EXTRACTION_MODE === 'gemini') {
+        const result = await visionClient.extract(req.file, { buildReport: true });
+
+        if (!result) {
+          return res.status(503).json({
+            success: false,
+            error: {
+              message:
+                'The extraction service is unavailable. Nothing was read from this image, ' +
+                'so no extraction has been recorded against the inspection.',
+              code: 503
+            }
+          });
+        }
+
+        inspection.extracted = result.declarations;
+        inspection.extractionReport = result.report;
+        inspection.ocrTokens = [];
+        inspection.status = 'extracted';
+        // No verdicts in this mode: the rule engine is dormant, and an empty
+        // results array is honest where a fabricated one would not be.
+        inspection.results = [];
+        inspection.verdict = 'draft';
+        inspection.penalties = { total: 0, breakdown: [] };
+        await inspection.save();
+
+        return res.status(200).json({
+          success: true,
+          data: inspection,
+          meta: {
+            mode: 'gemini',
+            engine: result.engine,
+            usage: result.usage,
+            regionsDetected: result.detections.length,
+            imageHash: result.imageHash
+          }
+        });
+      }
+
+      // --- dormant path: OCR + millimetre measurement ----------------------
       const result = await visionClient.analyze(req.file, {
         panel: req.body.panel || 'principal',
         referenceWidthMm: req.body.referenceWidthMm ? Number(req.body.referenceWidthMm) : undefined,
@@ -154,6 +200,7 @@ router.post(
         success: true,
         data: inspection,
         meta: {
+          mode: 'legacy',
           engine: result.engine,
           source: result.source,
           processingTimeMs: result.processingTimeMs,
@@ -212,6 +259,71 @@ router.put(
 // PUT /api/inspections/:id/evaluate - deterministic rule engine pass
 router.put('/:id/evaluate', async (req, res, next) => {
   try {
+    // Gemini mode evaluates the *extraction* against the same deterministic rule
+    // pack. The model transcribed the label; these verdicts come from pure
+    // functions over that transcription, so a finding stays reproducible.
+    //
+    // The geometry rules (7(2), 7(3), 8(1), 9(1)(b)) are reported NOT_ASSESSED:
+    // they prescribe millimetres, and an extraction carries no measurement.
+    if (EXTRACTION_MODE === 'gemini') {
+      const current = await Inspection.findById(req.params.id).populate('productId', 'category');
+      if (!current) return notFound(res);
+      if (!canEdit(current, req.user)) return forbidden(res);
+
+      if (!current.extracted || !current.extracted.genericName) {
+        return res.status(409).json({
+          success: false,
+          error: {
+            message:
+              'This inspection has no extraction yet. Capture an image first, then evaluate.',
+            code: 409
+          }
+        });
+      }
+
+      const evaluation = evaluateExtraction(current.extracted, {
+        categoryId:
+          req.body.categoryId || (current.productId && current.productId.category) || undefined
+      });
+
+      current.results = evaluation.results;
+      current.verdict = deriveVerdict(evaluation);
+      current.penalties = {
+        total: evaluation.penaltyExposure.total,
+        breakdown: evaluation.penaltyExposure.breakdown.map((b) => ({
+          ruleId: b.ruleId,
+          amount: b.penalty
+        }))
+      };
+      current.rulePackVersion = evaluation.summary.rulePackVersion;
+      current.status = 'under_review';
+      current.complianceSummary = {
+        ...evaluation.summary,
+        inScope: evaluation.inScope,
+        scope: evaluation.scope,
+        categoryMatchedOn: evaluation.category.matchedOn,
+        categoryConfidence: evaluation.category.confidence,
+        categoryNote: evaluation.category.note
+      };
+      await current.save();
+
+      return res.status(200).json({
+        success: true,
+        data: current,
+        meta: {
+          mode: 'gemini',
+          evaluated: true,
+          inScope: evaluation.inScope,
+          category: evaluation.category,
+          summary: evaluation.summary,
+          note:
+            'Verdicts are produced by the deterministic rule pack over the extracted ' +
+            'declarations. Rules prescribing millimetres are reported as not assessed, ' +
+            'because this path reads the label but does not measure it.'
+        }
+      });
+    }
+
     const inspection = await Inspection.findById(req.params.id).populate('productId', 'category');
     if (!inspection) return notFound(res);
     if (!canEdit(inspection, req.user)) return forbidden(res);

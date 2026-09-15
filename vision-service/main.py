@@ -17,6 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import pipeline
 from app.config import settings
 from app.engines import get_engine, list_engines
+from app.gemini import extractor as gemini_extractor
+from app.gemini import report as gemini_report
 from app.schemas import AnalyzeRequest, AnalyzeResponse, HealthResponse, OcrResponse
 from app.tagging import vlm
 
@@ -138,6 +140,50 @@ async def analyze(
         raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}") from exc
 
 
+@app.post("/extract")
+async def extract(
+    file: UploadFile = File(...),
+    build_report: bool = Form(True),
+    model: str | None = Form(None),
+):
+    """Gemini label extraction and object detection -- the active path.
+
+    Returns the transcribed declarations, the located regions with pixel boxes,
+    the nutrition panel, and a client report. The OCR engines and the millimetre
+    measurement stages are not run: when EXTRACTION_MODE is "gemini" they are
+    inactive by design, and the legacy pipeline remains available at /analyze.
+    """
+    data = await _read_upload(file)
+
+    try:
+        import cv2
+        import numpy as np
+
+        decoded = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+        size = (decoded.shape[1], decoded.shape[0]) if decoded is not None else None
+
+        result = gemini_extractor.extract(
+            data, file.content_type or "image/jpeg", image_size=size, model=model
+        )
+    except gemini_extractor.GeminiUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - provider runtime failures
+        logger.exception("Gemini extraction failed")
+        raise HTTPException(status_code=502, detail=f"Extraction failed: {exc}") from exc
+
+    payload: dict = {
+        "extraction": result,
+        "declarations": gemini_extractor.to_declaration_heads(result),
+        "imageHash": pipeline.image_hash(data),
+        "mode": settings.EXTRACTION_MODE,
+    }
+
+    if build_report:
+        payload["report"] = gemini_report.build(result, image_hash=payload["imageHash"])
+
+    return {"success": True, "data": payload}
+
+
 @app.post("/tag")
 async def tag(file: UploadFile = File(...), tokens: str = Form("")):
     """VLM pass over the two unstructured heads (build order step 3).
@@ -174,6 +220,13 @@ def health():
         version=settings.VERSION,
         engines=list_engines(),
         capabilities={
+            "extraction_mode": settings.EXTRACTION_MODE,
+            "gemini_extraction": {
+                "active": settings.EXTRACTION_MODE in ("gemini", "hybrid"),
+                "configured": gemini_extractor.is_configured(),
+                "model": settings.VLM_MODEL,
+            },
+            "legacy_pipeline_active": settings.EXTRACTION_MODE in ("legacy", "hybrid"),
             "ocr": True,
             "perspective_correction": True,
             "mm_calibration": True,

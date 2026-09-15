@@ -81,6 +81,48 @@ export interface VisionMeasurements {
   panelGeometry?: { area_cm2: number | null; confidence: string } | null;
 }
 
+/** Client extraction report produced by the Gemini path. */
+export interface ExtractionReport {
+  summary: {
+    product: string;
+    brand?: string | null;
+    packageType?: string | null;
+    packageMaterial?: string | null;
+    declarationsFound: number;
+    declarationsTotal: number;
+    completenessPercent: number;
+    extractionConfidence?: number | null;
+    regionsDetected: number;
+    imageHash?: string | null;
+    model?: string | null;
+    processingTimeMs?: number | null;
+  };
+  declarations: Array<{
+    key: string;
+    citation: string;
+    label: string;
+    value: string | null;
+    status: 'found' | 'not_found';
+  }>;
+  fssai: Array<{ key: string; label: string; value: unknown; status: 'found' | 'not_found' }>;
+  nutrition?: Record<string, any> | null;
+  package?: {
+    type?: string | null;
+    material?: string | null;
+    is_curved_surface?: boolean | null;
+    is_blown_or_moulded?: boolean | null;
+  } | null;
+  detections: Array<{
+    region: string;
+    box?: { x: number; y: number; width: number; height: number };
+    box_2d?: number[];
+    text?: string | null;
+  }>;
+  legibilityIssues?: string[];
+  notes?: string | null;
+  disclaimer?: string;
+}
+
 /** Spelling advisory attached to the SPELL checklist row. */
 export interface SpellCheckResult {
   misspellings: Array<{
@@ -95,8 +137,8 @@ export interface SpellCheckResult {
   likelyOCRError: boolean;
 }
 
-export type Verdict = 'compliant' | 'non_compliant' | 'review' | 'draft';
-export type RuleVerdict = 'PASS' | 'FAIL' | 'REVIEW' | 'NOT_APPLICABLE';
+export type Verdict = 'compliant' | 'non_compliant' | 'review' | 'draft' | 'not_applicable';
+export type RuleVerdict = 'PASS' | 'FAIL' | 'REVIEW' | 'NOT_APPLICABLE' | 'NOT_ASSESSED';
 export type InspectionStatus =
   | 'draft'
   | 'extracted'
@@ -154,6 +196,25 @@ export interface Inspection {
   remarks?: string;
   penalties?: { total: number; breakdown: Array<{ ruleId: string; amount: number }> };
   attachments?: unknown[];
+  /** Present when the inspection was read by the Gemini extraction path. */
+  extractionReport?: ExtractionReport | null;
+  /** Counts, resolved category and scope-gate outcome for the evaluated rows. */
+  complianceSummary?: {
+    total: number;
+    passed: number;
+    failed: number;
+    review: number;
+    notApplicable: number;
+    notAssessed: number;
+    category: string;
+    categoryName?: string;
+    categoryMatchedOn?: string | null;
+    categoryConfidence?: string;
+    categoryNote?: string;
+    inScope?: boolean;
+    scope?: { citation?: string; reason?: string };
+    rulePackVersion?: string;
+  } | null;
   createdAt: string;
   updatedAt?: string;
 }
