@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - lm-verify-network
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    depends_on:
+      - mongodb
+      - redis
+      - ocr-stub
+    networks:
+      - lm-verify-network
+
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - lm-verify-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - lm-verify-network
+
+  ocr-stub:
+    build:
+      context: ./ocr-stub
+    ports:
+      - "8001:8001"
+    networks:
+      - lm-verify-network
+
+volumes:
+  mongo-data:
+
+networks:
+  lm-verify-network:
+    driver: bridge

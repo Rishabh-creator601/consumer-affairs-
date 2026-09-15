@@ -1,0 +1,57 @@
+[
+  {
+    "id": "baby_food",
+    "name": "Baby food",
+    "description": "Baby food",
+    "unitOfDeclaration": "weight",
+    "fourthScheduleItem": null,
+    "secondSchedulePackSizes": [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000, 5000, 10000],
+    "exemptions": { "date": true, "mrp": false, "reason": "FSSAI rules apply for date" },
+    "overridingLaw": "FSSAI",
+    "whenPackedAllowed": false
+  },
+  {
+    "id": "bidi",
+    "name": "Bidi",
+    "description": "Bidi",
+    "unitOfDeclaration": "number",
+    "fourthScheduleItem": null,
+    "secondSchedulePackSizes": [],
+    "exemptions": { "date": true, "mrp": true, "reason": "Bidi is exempt from date and MRP" },
+    "overridingLaw": null,
+    "whenPackedAllowed": false
+  },
+  {
+    "id": "toilet_soap",
+    "name": "Toilet soap",
+    "description": "Toilet soap",
+    "unitOfDeclaration": "weight",
+    "fourthScheduleItem": null,
+    "secondSchedulePackSizes": [],
+    "exemptions": { "date": false, "mrp": false, "reason": "" },
+    "overridingLaw": null,
+    "whenPackedAllowed": true
+  },
+  {
+    "id": "food_manufacturer_id",
+    "name": "Food generic",
+    "description": "Food generic",
+    "unitOfDeclaration": "weight",
+    "fourthScheduleItem": null,
+    "secondSchedulePackSizes": [],
+    "exemptions": { "date": true, "mrp": false, "reason": "FSSAI" },
+    "overridingLaw": "FSSAI",
+    "whenPackedAllowed": false
+  },
+  {
+    "id": "cosmetics",
+    "name": "Cosmetics",
+    "description": "Cosmetics",
+    "unitOfDeclaration": "weight",
+    "fourthScheduleItem": "Cosmetics",
+    "secondSchedulePackSizes": [],
+    "exemptions": { "date": true, "mrp": false, "reason": "Drugs and Cosmetics Act" },
+    "overridingLaw": "D&C",
+    "whenPackedAllowed": false
+  }
+]
