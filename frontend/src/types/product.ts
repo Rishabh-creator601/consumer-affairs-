@@ -3,7 +3,7 @@ export interface ComplianceHistoryEntry {
   verdict: 'compliant' | 'non_compliant' | 'review' | 'draft';
   date: string;
   violations: number;
-  ref: string;
+  ref?: string;
 }
 
 export interface Product {

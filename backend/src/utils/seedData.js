@@ -37,7 +37,7 @@ const seedData = async () => {
       version: '1.0.0',
       effectiveFrom: new Date('2011-04-01'),
       isActive: true,
-      rules: rulePackData.rules || [],
+      rules: Array.isArray(rulePackData) ? rulePackData : rulePackData.rules || [],
       createdBy: controller._id
     });
 

@@ -2,34 +2,74 @@ const express = require('express');
 const router = express.Router();
 const protect = require('../middleware/auth');
 const { single } = require('../middleware/upload');
-const { OCR_SERVICE_URL } = require('../config/env');
+const visionClient = require('../services/visionClient');
+const { computeImageHash } = require('../services/imageService');
 
 router.use(protect);
 
-// POST /api/ocr/analyze
+// POST /api/ocr/analyze - full vision pipeline: read and measure
 router.post('/analyze', single, async (req, res, next) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ success: false, error: { message: 'Image file is required' } });
+      return res
+        .status(400)
+        .json({ success: false, error: { message: 'An image file is required', code: 400 } });
     }
-    
-    // In a real application, you would send req.file.buffer to the OCR_SERVICE_URL
-    // Here we stub the response
-    const stubTokens = [
-      { text: 'MRP', bbox: [10, 10, 50, 20], confidence: 0.99 },
-      { text: 'Rs. 100', bbox: [60, 10, 100, 20], confidence: 0.98 }
-    ];
 
-    res.status(200).json({ success: true, data: { tokens: stubTokens } });
+    const result = await visionClient.analyze(req.file, {
+      panel: req.body.panel || 'principal',
+      referenceWidthMm: req.body.referenceWidthMm ? Number(req.body.referenceWidthMm) : undefined,
+      referenceKind: req.body.referenceKind,
+      isCurvedSurface: req.body.isCurvedSurface === 'true',
+      isBlownOrMoulded: req.body.isBlownOrMoulded === 'true',
+      languages: req.body.languages ? String(req.body.languages).split(',') : ['en'],
+      engine: req.body.engine
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        tokens: result.tokens,
+        engine: result.engine,
+        source: result.source,
+        measurements: result.measurements,
+        imageHash: result.imageHash || computeImageHash(req.file.buffer),
+        processingTime: result.processingTimeMs,
+        warnings: result.warnings
+      }
+    });
   } catch (error) {
     next(error);
   }
 });
 
-// GET /api/ocr/status
-router.get('/status', (req, res) => {
-  // Stub health check
-  res.status(200).json({ success: true, data: { status: 'healthy', service: OCR_SERVICE_URL } });
+// POST /api/ocr/read - tokens only, without the measurement stages
+router.post('/read', single, async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res
+        .status(400)
+        .json({ success: false, error: { message: 'An image file is required', code: 400 } });
+    }
+
+    const result = await visionClient.readTokens(req.file, {
+      languages: req.body.languages ? String(req.body.languages).split(',') : ['en'],
+      engine: req.body.engine
+    });
+
+    res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/ocr/status - which engine is live, and what it can do
+router.get('/status', async (req, res, next) => {
+  try {
+    res.status(200).json({ success: true, data: await visionClient.status() });
+  } catch (error) {
+    next(error);
+  }
 });
 
 module.exports = router;

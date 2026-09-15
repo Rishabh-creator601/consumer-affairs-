@@ -1,19 +1,24 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const { BCRYPT_ROUNDS, MAX_LOGIN_ATTEMPTS, LOCK_WINDOW_MS } = require('../config/env');
 
 const userSchema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
     unique: true,
+    lowercase: true,
+    trim: true,
     match: [
-      /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+      /^[\w.+-]+@[\w-]+(\.[\w-]+)+$/,
       'Please add a valid email'
     ]
   },
   passwordHash: {
     type: String,
-    required: true
+    required: true,
+    select: false
   },
   role: {
     type: String,
@@ -31,7 +36,35 @@ const userSchema = new mongoose.Schema({
     default: false
   },
   mfaSecret: {
-    type: String
+    type: String,
+    select: false
+  },
+  // Incremented on logout-all / password change / deactivation so previously
+  // issued access and refresh tokens stop validating immediately.
+  tokenVersion: {
+    type: Number,
+    default: 0
+  },
+  // SHA-256 of the currently valid refresh token (rotation + revocation).
+  refreshTokenHash: {
+    type: String,
+    select: false
+  },
+  refreshTokenExpiresAt: {
+    type: Date,
+    select: false
+  },
+  failedLoginAttempts: {
+    type: Number,
+    default: 0,
+    select: false
+  },
+  lockUntil: {
+    type: Date,
+    select: false
+  },
+  passwordChangedAt: {
+    type: Date
   },
   lastLogin: {
     type: Date
@@ -44,18 +77,80 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Hash password before saving
-userSchema.pre('save', async function(next) {
-  if (!this.isModified('passwordHash')) {
+// Hash the password whenever it is set or changed.
+userSchema.pre('save', async function (next) {
+  if (!this.isModified('passwordHash')) return next();
+
+  try {
+    const salt = await bcrypt.genSalt(BCRYPT_ROUNDS);
+    this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
+    this.passwordChangedAt = new Date();
+    if (!this.isNew) this.tokenVersion += 1;
     next();
+  } catch (err) {
+    next(err);
   }
-  const salt = await bcrypt.genSalt(10);
-  this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
 });
 
-// Compare password
-userSchema.methods.comparePassword = async function(enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.passwordHash);
+userSchema.methods.comparePassword = function (enteredPassword) {
+  if (!this.passwordHash) return Promise.resolve(false);
+  return bcrypt.compare(enteredPassword, this.passwordHash);
+};
+
+userSchema.methods.isLocked = function () {
+  return Boolean(this.lockUntil && this.lockUntil.getTime() > Date.now());
+};
+
+userSchema.methods.registerFailedLogin = function () {
+  const attempts = (this.failedLoginAttempts || 0) + 1;
+  const update = { $set: { failedLoginAttempts: attempts } };
+
+  if (attempts >= MAX_LOGIN_ATTEMPTS) {
+    update.$set.lockUntil = new Date(Date.now() + LOCK_WINDOW_MS);
+    update.$set.failedLoginAttempts = 0;
+  }
+
+  return this.constructor.updateOne({ _id: this._id }, update);
+};
+
+userSchema.methods.registerSuccessfulLogin = function () {
+  return this.constructor.updateOne(
+    { _id: this._id },
+    { $set: { failedLoginAttempts: 0, lastLogin: new Date() }, $unset: { lockUntil: 1 } }
+  );
+};
+
+// Refresh tokens are stored hashed, never in plaintext.
+userSchema.statics.hashToken = function (token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+};
+
+userSchema.methods.setRefreshToken = function (token, expiresAt) {
+  return this.constructor.updateOne(
+    { _id: this._id },
+    { $set: { refreshTokenHash: this.constructor.hashToken(token), refreshTokenExpiresAt: expiresAt } }
+  );
+};
+
+userSchema.methods.clearRefreshToken = function () {
+  return this.constructor.updateOne(
+    { _id: this._id },
+    { $unset: { refreshTokenHash: 1, refreshTokenExpiresAt: 1 } }
+  );
+};
+
+userSchema.methods.toSafeJSON = function () {
+  return {
+    _id: this._id,
+    email: this.email,
+    displayName: this.displayName,
+    role: this.role,
+    jurisdiction: this.jurisdiction,
+    isActive: this.isActive,
+    mfaEnabled: this.mfaEnabled,
+    lastLogin: this.lastLogin,
+    createdAt: this.createdAt
+  };
 };
 
 module.exports = mongoose.model('User', userSchema);

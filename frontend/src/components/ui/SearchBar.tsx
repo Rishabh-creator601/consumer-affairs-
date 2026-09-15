@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from 'react';
+'use client';
+
+import React, { useEffect, useRef, useState } from 'react';
+import { Search, X } from 'lucide-react';
 
 interface SearchBarProps {
   onSearch: (value: string) => void;
@@ -9,46 +12,43 @@ interface SearchBarProps {
 
 export function SearchBar({ onSearch, placeholder = 'Search...', delay = 300, children }: SearchBarProps) {
   const [value, setValue] = useState('');
+  const onSearchRef = useRef(onSearch);
+  onSearchRef.current = onSearch;
 
   useEffect(() => {
-    const handler = setTimeout(() => {
-      onSearch(value);
-    }, delay);
-
+    const handler = setTimeout(() => onSearchRef.current(value), delay);
     return () => clearTimeout(handler);
-  }, [value, onSearch, delay]);
+  }, [value, delay]);
 
   return (
-    <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center w-full">
-      <div className="relative flex-1 w-full">
-        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-          <svg className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
-          </svg>
-        </div>
+    <div className="flex w-full flex-col items-start gap-3 sm:flex-row sm:items-center">
+      <div className="relative w-full flex-1">
+        <Search
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-cyan-600"
+          aria-hidden="true"
+        />
         <input
-          type="text"
+          type="search"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder={placeholder}
-          className="block w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#06B6D4] focus:border-[#06B6D4] sm:text-sm"
+          aria-label={placeholder}
+          className="input pl-10 pr-10"
         />
         {value && (
           <button
+            type="button"
             onClick={() => setValue('')}
-            className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 transition-colors hover:bg-cyan-50 hover:text-cyan-700"
+            aria-label="Clear search"
           >
-            <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-            </svg>
+            <X className="h-4 w-4" />
           </button>
         )}
       </div>
-      {children && (
-        <div className="flex gap-2 w-full sm:w-auto">
-          {children}
-        </div>
-      )}
+      {children && <div className="flex w-full gap-2 sm:w-auto">{children}</div>}
     </div>
   );
 }
+
+export default SearchBar;

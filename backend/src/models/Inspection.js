@@ -50,8 +50,9 @@ const inspectionSchema = new mongoose.Schema({
       raw: String
     },
     monthYear: {
-      month: Number,
-      year: Number,
+      // Kept loose: OCR yields either a numeral ('08') or a month name ('Aug').
+      month: mongoose.Schema.Types.Mixed,
+      year: mongoose.Schema.Types.Mixed,
       raw: String
     },
     mrp: {
@@ -78,7 +79,9 @@ const inspectionSchema = new mongoose.Schema({
       type: String,
       enum: ['PASS', 'FAIL', 'REVIEW', 'NOT_APPLICABLE']
     },
-    confidence: Number,
+    // The rule modules report a qualitative band ('HIGH'), while OCR-derived
+    // results carry a numeric probability - both are stored as written.
+    confidence: mongoose.Schema.Types.Mixed,
     evidenceCrop: mongoose.Schema.Types.Mixed,
     measuredValue: mongoose.Schema.Types.Mixed,
     prescribedValue: mongoose.Schema.Types.Mixed,

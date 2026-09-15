@@ -3,12 +3,13 @@ node_modules/
 */node_modules/
 package-lock.json.bak
 
-# Next.js build
+# Next.js / Node build output
 .next/
 */.next/
 out/
-build/
-dist/
+frontend/build/
+frontend/dist/
+backend/dist/
 
 # Environment variables
 .env
@@ -25,29 +26,32 @@ yarn-error.log*
 pnpm-debug.log*
 *.log
 
-# Python
+# Python (anchored to the vision sidecar: a bare `lib/` here would also swallow
+# application source directories such as frontend/src/lib)
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+.pytest_cache/
+vision-service/env/
+vision-service/venv/
+vision-service/.venv/
+vision-service/build/
+vision-service/develop-eggs/
+vision-service/dist/
+vision-service/downloads/
+vision-service/eggs/
+vision-service/.eggs/
+vision-service/.venv/lib/
+vision-service/.venv/lib64/
+vision-service/parts/
+vision-service/sdist/
+vision-service/var/
+vision-service/wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-.pytest_cache/
 
 # Testing & Coverage
 coverage/
@@ -65,3 +69,6 @@ Thumbs.db
 scratch/
 temp/
 tmp/
+
+# TypeScript incremental build cache
+*.tsbuildinfo

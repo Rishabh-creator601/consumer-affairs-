@@ -1,35 +1,414 @@
 'use client';
+
+import React, { useMemo, useState } from 'react';
+import Link from 'next/link';
+import { ArrowLeft, Gavel, ScanSearch } from 'lucide-react';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { Button } from '@/components/ui/Button';
+import { Modal } from '@/components/ui/Modal';
+import { ReportDownloader } from '@/components/reports/ReportDownloader';
+import { ChecklistTable } from '@/components/inspection/ChecklistTable';
+import { DeclarationTable } from '@/components/inspection/DeclarationTable';
+import { OcrTokenTable } from '@/components/inspection/OcrTokenTable';
+import { SpellCheckPanel } from '@/components/inspection/SpellCheckPanel';
+import { MeasurementPanel } from '@/components/inspection/MeasurementPanel';
+import { useApi } from '@/lib/hooks';
+import { inspectionService } from '@/lib/services';
+import { useAuth } from '@/lib/auth';
+import { ApiError } from '@/lib/api';
+import { STATUS_LABELS, formatCurrency, formatDateTime } from '@/lib/constants';
+import type { ComplianceResult, Inspection, PopulatedRef, RuleVerdict } from '@/types/inspection';
+
+const effectiveVerdict = (r: ComplianceResult): RuleVerdict =>
+  r.overridden && r.overrideVerdict ? r.overrideVerdict : r.verdict;
+
+const asRef = (value: unknown): PopulatedRef | null =>
+  value && typeof value === 'object' ? (value as PopulatedRef) : null;
+
+type Tab = 'checklist' | 'declarations' | 'tokens';
 
 export default function ResultsPage({ params }: { params: { id: string } }) {
+  const { user } = useAuth();
+  const inspection = useApi(() => inspectionService.byId(params.id), [params.id]);
+
+  const [tab, setTab] = useState<Tab>('checklist');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [overrideTarget, setOverrideTarget] = useState<ComplianceResult | null>(null);
+  const [overrideVerdict, setOverrideVerdict] = useState<RuleVerdict>('PASS');
+  const [overrideReason, setOverrideReason] = useState('');
+  const [adjudicateOpen, setAdjudicateOpen] = useState(false);
+  const [adjudicateVerdict, setAdjudicateVerdict] = useState('compliant');
+  const [remarks, setRemarks] = useState('');
+
+  const data = inspection.data;
+  const canAdjudicate = !!user && ['senior_inspector', 'controller'].includes(user.role);
+  const canEvaluate = !!user && ['field_inspector', 'senior_inspector', 'controller'].includes(user.role);
+
+  const summary = useMemo(() => {
+    const results = data?.results ?? [];
+    return {
+      pass: results.filter((r) => effectiveVerdict(r) === 'PASS').length,
+      fail: results.filter((r) => effectiveVerdict(r) === 'FAIL').length,
+      review: results.filter((r) => effectiveVerdict(r) === 'REVIEW').length,
+      na: results.filter((r) => effectiveVerdict(r) === 'NOT_APPLICABLE').length,
+    };
+  }, [data]);
+
+  const spellRow = useMemo(
+    () => (data?.results ?? []).find((r) => r.ruleId === 'SPELL'),
+    [data]
+  );
+
+  const runAction = async (key: string, action: () => Promise<Inspection>) => {
+    setBusy(key);
+    setActionError(null);
+    try {
+      inspection.setData(await action());
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : 'That action could not be completed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (inspection.isLoading) {
+    return (
+      <div className="mx-auto max-w-7xl space-y-6 p-4 lg:p-8">
+        <div className="skeleton h-10 w-72" />
+        <div className="grid gap-4 sm:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="skeleton h-20 w-full" />
+          ))}
+        </div>
+        <div className="skeleton h-96 w-full" />
+      </div>
+    );
+  }
+
+  if (inspection.error || !data) {
+    return (
+      <div className="mx-auto max-w-lg p-8">
+        <div className="card p-8 text-center">
+          <h1 className="text-lg font-bold text-cyan-950">Inspection unavailable</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            {inspection.error || 'This inspection was not found.'}
+          </p>
+          <div className="mt-5 flex justify-center gap-3">
+            <Button variant="secondary" onClick={inspection.reload}>
+              Try again
+            </Button>
+            <Link href="/dashboard">
+              <Button variant="ghost">Back to dashboard</Button>
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const product = asRef(data.productId);
+  const officer = asRef(data.officerId);
+  const additional = data.extracted?.additionalInfo;
+
+  const tabs: Array<{ key: Tab; label: string; count?: number }> = [
+    { key: 'checklist', label: 'Compliance checklist', count: data.results.length },
+    { key: 'declarations', label: 'Statutory declarations', count: 7 },
+    { key: 'tokens', label: 'Raw OCR', count: data.ocrTokens?.length ?? 0 },
+  ];
+
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-start mb-6">
+    <div className="mx-auto max-w-7xl p-4 lg:p-8">
+      <Link
+        href="/dashboard"
+        className="focus-ring mb-4 inline-flex items-center gap-1.5 rounded text-sm text-cyan-700 hover:text-cyan-900"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        Back to dashboard
+      </Link>
+
+      <div className="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-3">
-            Inspection {params.id}
-            <StatusPill verdict="REVIEW" />
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">Product: Example Packaged Water</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="page-title font-mono">{data.ref}</h1>
+            <StatusPill verdict={data.verdict} />
+            <span className="chip border-cyan-200 bg-cyan-50 text-cyan-800">
+              {STATUS_LABELS[data.status] || data.status}
+            </span>
+            {additional?.ocrEngine && (
+              <span className="chip border-cyan-200 bg-white text-cyan-700">
+                OCR: {additional.ocrEngine}
+              </span>
+            )}
+          </div>
+          <p className="page-subtitle">
+            {product
+              ? `${product.brand || ''} ${product.genericName || ''}`.trim()
+              : data.extracted?.genericName || 'Unidentified product'}
+            {officer?.displayName ? ` · Raised by ${officer.displayName}` : ''} ·{' '}
+            {formatDateTime(data.createdAt)}
+          </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="secondary">Download Report</Button>
-          <Button variant="primary">Adjudicate</Button>
+
+        <div className="flex flex-wrap gap-2">
+          {canEvaluate && (
+            <Button
+              variant="secondary"
+              isLoading={busy === 'evaluate'}
+              onClick={() => runAction('evaluate', () => inspectionService.evaluate(data._id))}
+            >
+              <ScanSearch className="h-4 w-4" aria-hidden="true" />
+              Re-run rule engine
+            </Button>
+          )}
+          <ReportDownloader inspectionId={data._id} inspectionRef={data.ref} />
+          {canAdjudicate && (
+            <Button onClick={() => setAdjudicateOpen(true)}>
+              <Gavel className="h-4 w-4" aria-hidden="true" />
+              Adjudicate
+            </Button>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-lg shadow-sm border border-cyan-brand/10 p-6">
-          <h2 className="text-lg font-bold mb-4">Extracted Declarations</h2>
-          <div className="text-sm text-slate-500 italic">Table placeholder...</div>
+      {actionError && (
+        <div className="mb-6 rounded-lg border border-verdict-fail/25 bg-verdict-fail/5 p-3 text-sm text-verdict-fail">
+          {actionError}
+        </div>
+      )}
+
+      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
+        {[
+          { label: 'Passed', value: summary.pass, tone: 'text-verdict-pass' },
+          { label: 'Failed', value: summary.fail, tone: 'text-verdict-fail' },
+          { label: 'Needs review', value: summary.review, tone: 'text-verdict-review' },
+          { label: 'Not applicable', value: summary.na, tone: 'text-slate-500' },
+          {
+            label: 'Penalty exposure',
+            value: formatCurrency(data.penalties?.total ?? 0),
+            tone: 'text-cyan-950',
+          },
+        ].map((item) => (
+          <div key={item.label} className="card p-4">
+            <p className="text-xs font-medium text-slate-500">{item.label}</p>
+            <p className={`mt-1 text-2xl font-bold ${item.tone}`}>{item.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <div className="xl:col-span-2">
+          <div className="mb-4 flex flex-wrap gap-2 border-b border-cyan-100">
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`focus-ring -mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                  tab === t.key
+                    ? 'border-cyan-bright text-cyan-900'
+                    : 'border-transparent text-slate-500 hover:text-cyan-800'
+                }`}
+              >
+                {t.label}
+                {t.count !== undefined && (
+                  <span className="ml-1.5 text-xs text-slate-400">{t.count}</span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {tab === 'checklist' && (
+            <ChecklistTable
+              results={data.results}
+              rulePackVersion={data.rulePackVersion}
+              canOverride={canAdjudicate}
+              onOverride={(result) => {
+                setOverrideTarget(result);
+                setOverrideVerdict(effectiveVerdict(result));
+                setOverrideReason(result.overrideReason || '');
+              }}
+            />
+          )}
+
+          {tab === 'declarations' && <DeclarationTable extracted={data.extracted} />}
+
+          {tab === 'tokens' && (
+            <OcrTokenTable tokens={data.ocrTokens ?? []} engine={additional?.ocrEngine} />
+          )}
         </div>
 
-        <div className="bg-white rounded-lg shadow-sm border border-cyan-brand/10 p-6">
-          <h2 className="text-lg font-bold mb-4">Compliance Checklist</h2>
-          <div className="text-sm text-slate-500 italic">Checklist placeholder...</div>
+        <div className="flex flex-col gap-6">
+          <MeasurementPanel
+            measurements={additional?.visionMeasurements}
+            engine={additional?.ocrEngine}
+            warnings={additional?.visionWarnings}
+          />
+
+          <SpellCheckPanel
+            result={spellRow?.spellCheck}
+            found={spellRow?.found}
+            note={spellRow?.note}
+          />
+
+          {data.remarks && (
+            <section className="card p-5">
+              <h2 className="section-title mb-2">Adjudication remarks</h2>
+              <p className="text-sm text-slate-700">{data.remarks}</p>
+            </section>
+          )}
         </div>
       </div>
+
+      {/* Override dialog */}
+      <Modal
+        isOpen={!!overrideTarget}
+        onClose={() => setOverrideTarget(null)}
+        title={`Override ${overrideTarget?.citation || overrideTarget?.ruleId || ''}`}
+        description="Overrides are recorded against your account in the audit trail."
+      >
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!overrideTarget) return;
+            await runAction('override', () =>
+              inspectionService.override(data._id, {
+                ruleId: overrideTarget.ruleId,
+                overrideVerdict,
+                overrideReason,
+              })
+            );
+            setOverrideTarget(null);
+          }}
+        >
+          {overrideTarget?.measuredValue && (
+            <div className="rounded-lg border border-cyan-100 bg-cyan-50/60 p-3 text-sm">
+              <p className="text-cyan-950">
+                Measured <span className="font-mono">{overrideTarget.measuredValue}</span>
+                {overrideTarget.prescribedValue && (
+                  <>
+                    {' '}against <span className="font-mono">{overrideTarget.prescribedValue}</span>
+                  </>
+                )}
+              </p>
+              {overrideTarget.note && (
+                <p className="mt-1 text-xs italic text-slate-600">{overrideTarget.note}</p>
+              )}
+            </div>
+          )}
+
+          <div>
+            <label htmlFor="overrideVerdict" className="label">
+              Officer verdict
+            </label>
+            <select
+              id="overrideVerdict"
+              value={overrideVerdict}
+              onChange={(e) => setOverrideVerdict(e.target.value as RuleVerdict)}
+              className="input"
+            >
+              <option value="PASS">Pass</option>
+              <option value="FAIL">Fail</option>
+              <option value="REVIEW">Needs review</option>
+              <option value="NOT_APPLICABLE">Not applicable</option>
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="overrideReason" className="label">
+              Reason (minimum 10 characters)
+            </label>
+            <textarea
+              id="overrideReason"
+              value={overrideReason}
+              onChange={(e) => setOverrideReason(e.target.value)}
+              rows={3}
+              required
+              minLength={10}
+              className="input resize-none"
+              placeholder="Explain why the automated verdict is being changed…"
+            />
+          </div>
+
+          <div className="flex justify-end gap-3 border-t border-cyan-100 pt-4">
+            <Button type="button" variant="secondary" onClick={() => setOverrideTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              isLoading={busy === 'override'}
+              disabled={overrideReason.trim().length < 10}
+            >
+              Record override
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Adjudication dialog */}
+      <Modal
+        isOpen={adjudicateOpen}
+        onClose={() => setAdjudicateOpen(false)}
+        title="Adjudicate inspection"
+        description="This closes the automated stage and records the officer's final verdict."
+      >
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            await runAction('adjudicate', () =>
+              inspectionService.adjudicate(data._id, { verdict: adjudicateVerdict, remarks })
+            );
+            setAdjudicateOpen(false);
+          }}
+        >
+          {summary.review > 0 && (
+            <div className="rounded-lg border border-verdict-review/25 bg-verdict-review/5 p-3 text-sm text-verdict-review">
+              {summary.review} row{summary.review === 1 ? '' : 's'} still read “needs review”. Those
+              are the checks the system declined to decide; look at them before closing the case.
+            </div>
+          )}
+
+          <div>
+            <label htmlFor="verdict" className="label">
+              Final verdict
+            </label>
+            <select
+              id="verdict"
+              value={adjudicateVerdict}
+              onChange={(e) => setAdjudicateVerdict(e.target.value)}
+              className="input"
+            >
+              <option value="compliant">Compliant</option>
+              <option value="non_compliant">Non-compliant</option>
+              <option value="review">Keep under review</option>
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="remarks" className="label">
+              Remarks
+            </label>
+            <textarea
+              id="remarks"
+              value={remarks}
+              onChange={(e) => setRemarks(e.target.value)}
+              rows={4}
+              className="input resize-none"
+              placeholder="Findings, statutory basis and any direction issued…"
+            />
+          </div>
+
+          <div className="flex justify-end gap-3 border-t border-cyan-100 pt-4">
+            <Button type="button" variant="secondary" onClick={() => setAdjudicateOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" isLoading={busy === 'adjudicate'}>
+              Record verdict
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

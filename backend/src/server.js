@@ -1,54 +1,27 @@
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
 const { connectDB } = require('./config/db');
-const { PORT, NODE_ENV } = require('./config/env');
-const errorHandler = require('./middleware/errorHandler');
+const { PORT, NODE_ENV, CORS_ORIGINS } = require('./config/env');
+const createApp = require('./app');
 
-// Route imports
-const authRoutes = require('./routes/auth');
-const inspectionRoutes = require('./routes/inspections');
-const productRoutes = require('./routes/products');
-const reportRoutes = require('./routes/reports');
-const dashboardRoutes = require('./routes/dashboard');
-const ruleRoutes = require('./routes/rules');
-const userRoutes = require('./routes/users');
-const ocrRoutes = require('./routes/ocr');
+const app = createApp();
 
-const app = express();
-
-// Connect to MongoDB
 connectDB();
-
-// Middleware
-app.use(helmet());
-app.use(cors());
-app.use(express.json());
-
-if (NODE_ENV === 'development') {
-  app.use(morgan('dev'));
-}
-
-// Mount routes
-app.use('/api/auth', authRoutes);
-app.use('/api/inspections', inspectionRoutes);
-app.use('/api/products', productRoutes);
-app.use('/api/reports', reportRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/rules', ruleRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/ocr', ocrRoutes);
-
-// Global Error Handler
-app.use(errorHandler);
 
 const server = app.listen(PORT, () => {
   console.log(`Server running in ${NODE_ENV} mode on port ${PORT}`);
+  console.log(`Accepting browser requests from: ${CORS_ORIGINS.join(', ')}`);
 });
 
-// Graceful shutdown
-process.on('unhandledRejection', (err, promise) => {
-  console.log(`Error: ${err.message}`);
+const shutdown = (signal) => {
+  console.log(`${signal} received, closing server...`);
+  server.close(() => process.exit(0));
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+process.on('unhandledRejection', (err) => {
+  console.error(`Unhandled rejection: ${err && err.message}`);
   server.close(() => process.exit(1));
 });
+
+module.exports = server;

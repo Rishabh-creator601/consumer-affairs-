@@ -1,38 +1,33 @@
-'use client';
+import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
-import { AuthProvider, useAuth } from '@/lib/auth';
-import Sidebar from '@/components/layout/Sidebar';
-import { usePathname } from 'next/navigation';
+import { AuthProvider } from '@/lib/auth';
+import AppShell from '@/components/layout/AppShell';
 
-const inter = Inter({ subsets: ['latin'] });
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' });
 
-function AppLayout({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
-  const pathname = usePathname();
+export const metadata: Metadata = {
+  title: {
+    default: 'LM-Verify — Legal Metrology Compliance',
+    template: '%s · LM-Verify',
+  },
+  description:
+    'Automated compliance verification for packaged commodities under the Legal Metrology (Packaged Commodities) Rules, 2011.',
+  manifest: '/manifest.json',
+};
 
-  if (isLoading) return <div>Loading...</div>;
-
-  const isAuthPage = pathname === '/login';
-
-  if (isAuthPage) {
-    return <>{children}</>;
-  }
-
-  return (
-    <div className="flex h-screen bg-slate-50">
-      <Sidebar />
-      <main className="flex-1 overflow-auto">{children}</main>
-    </div>
-  );
-}
+export const viewport: Viewport = {
+  themeColor: '#083344',
+  width: 'device-width',
+  initialScale: 1,
+};
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>
+    <html lang="en" className={inter.variable}>
+      <body className="font-inter">
         <AuthProvider>
-          <AppLayout>{children}</AppLayout>
+          <AppShell>{children}</AppShell>
         </AuthProvider>
       </body>
     </html>

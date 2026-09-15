@@ -1,30 +1,33 @@
 'use client';
+
 import { clsx } from 'clsx';
+import { VERDICT_STYLES } from '@/lib/constants';
 
 interface StatusPillProps {
-  verdict?: 'PASS' | 'FAIL' | 'REVIEW' | 'NOT_APPLICABLE' | 'compliant' | 'non_compliant' | 'review' | 'draft';
+  verdict?: string;
   status?: string;
   label?: string;
+  className?: string;
 }
 
-export function StatusPill({ verdict, status, label }: StatusPillProps) {
-  const getVerdictStyle = (v: string) => {
-    switch (v.toUpperCase()) {
-      case 'PASS':
-      case 'COMPLIANT': return 'bg-verdict-pass/10 text-verdict-pass border-verdict-pass/20';
-      case 'FAIL':
-      case 'NON_COMPLIANT': return 'bg-verdict-fail/10 text-verdict-fail border-verdict-fail/20';
-      case 'REVIEW': return 'bg-verdict-review/10 text-verdict-review border-verdict-review/20';
-      default: return 'bg-gray-100 text-gray-700 border-gray-200';
-    }
+/**
+ * Renders a compliance outcome. Verdict colours are reserved and never reused
+ * for branding, so anything unrecognised falls back to neutral slate.
+ */
+export function StatusPill({ verdict, status, label, className }: StatusPillProps) {
+  const key = verdict || status || '';
+  const style = VERDICT_STYLES[key] || VERDICT_STYLES[key.toUpperCase()] || {
+    label: key ? key.replace(/_/g, ' ') : 'Unknown',
+    className: 'bg-cyan-50 text-cyan-800 border-cyan-200',
+    dot: 'bg-cyan-bright',
   };
 
-  const displayText = label || status || verdict || 'UNKNOWN';
-  const styleClass = verdict ? getVerdictStyle(verdict) : 'bg-cyan-soft text-cyan-deep border-cyan-brand/20';
-
   return (
-    <span className={clsx("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border", styleClass)}>
-      {displayText}
+    <span className={clsx('chip', style.className, className)}>
+      <span className={clsx('h-1.5 w-1.5 rounded-full', style.dot)} aria-hidden="true" />
+      {label || style.label}
     </span>
   );
 }
+
+export default StatusPill;

@@ -2,52 +2,66 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { formatDate } from '@/lib/constants';
+import type { QueueRow } from '@/lib/services';
 
-const mockQueue = [
-  { id: 'INS-8940', product: 'Amul Butter 500g', reason: 'Low OCR confidence on MRP', date: '2023-10-24' },
-  { id: 'INS-8935', product: 'Dove Soap 3-pack', reason: 'Missing Month/Year of Mfg', date: '2023-10-22' },
-  { id: 'INS-8921', product: 'Aashirvaad Atta 5kg', reason: 'Uncalibrated image for area', date: '2023-10-20' },
-];
+interface PendingReviewQueueProps {
+  data: QueueRow[];
+  isLoading?: boolean;
+}
 
-export function PendingReviewQueue() {
+export function PendingReviewQueue({ data, isLoading }: PendingReviewQueueProps) {
   return (
-    <div className="bg-white rounded-xl border border-[#ECFEFF] shadow-sm overflow-hidden flex flex-col h-full">
-      <div className="p-4 border-b border-[#ECFEFF] flex justify-between items-center bg-[#F8FAFC]">
+    <div className="card flex h-full flex-col overflow-hidden">
+      <div className="flex items-center justify-between border-b border-cyan-100 bg-cyan-50/60 px-4 py-3">
         <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-[#083344]">Pending Review</h3>
-          <span className="bg-[#9A5B08] text-white text-xs font-bold px-2 py-0.5 rounded-full">
-            {mockQueue.length}
-          </span>
+          <h3 className="section-title">Pending review</h3>
+          {!isLoading && data.length > 0 && (
+            <span className="rounded-full bg-verdict-review px-2 py-0.5 text-xs font-bold text-white">
+              {data.length}
+            </span>
+          )}
         </div>
       </div>
-      
+
       <div className="flex-1 overflow-auto">
-        <ul className="divide-y divide-gray-100">
-          {mockQueue.length === 0 ? (
-            <li className="p-8 text-center text-gray-500 text-sm">No items pending review.</li>
-          ) : (
-            mockQueue.map((item) => (
-              <li key={item.id} className="p-4 hover:bg-[#ECFEFF]/50 transition-colors">
-                <div className="flex justify-between items-start mb-2">
-                  <div className="font-medium text-sm text-[#083344]">{item.product}</div>
-                  <div className="text-xs text-gray-500">{item.date}</div>
+        {isLoading ? (
+          <ul className="divide-y divide-cyan-50">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <li key={i} className="space-y-2 p-4">
+                <div className="skeleton h-4 w-32" />
+                <div className="skeleton h-3 w-48" />
+              </li>
+            ))}
+          </ul>
+        ) : data.length === 0 ? (
+          <p className="p-8 text-center text-sm text-slate-500">Nothing is waiting on an officer.</p>
+        ) : (
+          <ul className="divide-y divide-cyan-50">
+            {data.map((item) => (
+              <li key={item._id} className="p-4 transition-colors hover:bg-cyan-50/60">
+                <div className="mb-2 flex items-start justify-between gap-3">
+                  <span className="text-sm font-medium text-cyan-950">{item.product || item.ref}</span>
+                  <span className="flex-shrink-0 text-xs text-slate-500">{formatDate(item.date)}</span>
                 </div>
-                <div className="text-xs text-[#9A5B08] mb-3 bg-orange-50 inline-block px-2 py-1 rounded">
+                <p className="mb-3 inline-block rounded bg-verdict-review/10 px-2 py-1 text-xs text-verdict-review">
                   {item.reason}
-                </div>
+                </p>
                 <div>
-                  <Link 
-                    href={`/results/${item.id}`} 
-                    className="inline-flex items-center justify-center px-3 py-1.5 text-xs font-medium bg-white border border-[#06B6D4] text-[#0E7490] rounded hover:bg-[#ECFEFF] transition-colors"
+                  <Link
+                    href={`/results/${item._id}`}
+                    className="focus-ring inline-flex items-center rounded-lg border border-cyan-300 bg-white px-3 py-1.5 text-xs font-medium text-cyan-800 transition-colors hover:bg-cyan-50"
                   >
-                    Review Now
+                    Review now
                   </Link>
                 </div>
               </li>
-            ))
-          )}
-        </ul>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );
 }
+
+export default PendingReviewQueue;

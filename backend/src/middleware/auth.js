@@ -1,34 +1,44 @@
-const jwt = require('jsonwebtoken');
-const { JWT_SECRET } = require('../config/env');
 const User = require('../models/User');
+const { verifyAccessToken } = require('../services/tokenService');
 
+const unauthorized = (res, message, code = 'UNAUTHORIZED') =>
+  res.status(401).json({ success: false, error: { message, code: 401, reason: code } });
+
+/**
+ * Validates the bearer access token and loads the live user record, so a
+ * deactivated or force-logged-out account cannot keep using a valid-looking JWT.
+ */
 const protect = async (req, res, next) => {
-  let token;
-  
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith('Bearer')
-  ) {
-    try {
-      token = req.headers.authorization.split(' ')[1];
-      const decoded = jwt.verify(token, JWT_SECRET);
-      
-      req.user = await User.findById(decoded.id).select('-passwordHash');
-      
-      if (!req.user) {
-        return res.status(401).json({ success: false, error: { message: 'User not found' } });
-      }
-      
-      next();
-    } catch (error) {
-      console.error(error);
-      return res.status(401).json({ success: false, error: { message: 'Not authorized, token failed' } });
+  const header = req.headers.authorization || '';
+
+  if (!header.startsWith('Bearer ')) {
+    return unauthorized(res, 'Not authorized, no token provided', 'NO_TOKEN');
+  }
+
+  const token = header.slice(7).trim();
+  if (!token) return unauthorized(res, 'Not authorized, no token provided', 'NO_TOKEN');
+
+  let decoded;
+  try {
+    decoded = verifyAccessToken(token);
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      return unauthorized(res, 'Access token expired', 'TOKEN_EXPIRED');
     }
+    return unauthorized(res, 'Not authorized, token failed verification', 'TOKEN_INVALID');
   }
-  
-  if (!token) {
-    return res.status(401).json({ success: false, error: { message: 'Not authorized, no token' } });
+
+  const user = await User.findById(decoded.sub);
+
+  if (!user) return unauthorized(res, 'Account no longer exists', 'USER_NOT_FOUND');
+  if (!user.isActive) return unauthorized(res, 'Account has been deactivated', 'USER_INACTIVE');
+  if ((user.tokenVersion || 0) !== (decoded.tv || 0)) {
+    return unauthorized(res, 'Session has been revoked, please sign in again', 'TOKEN_REVOKED');
   }
+
+  req.user = user;
+  req.token = decoded;
+  next();
 };
 
 module.exports = protect;
